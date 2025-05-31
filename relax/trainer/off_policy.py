@@ -78,7 +78,7 @@ class OffPolicyTrainer:
         self.sample_log_interval = Interval(self.sample_log_n_episode)
         self.save_policy_interval = Interval(self.save_policy_every)
         # self.eval_interval = Interval()
-        wandb.init(project="sdac",
+        wandb.init(project="diffusion_online_rl",
                    name=log_path.name,
                    dir=log_path,
                    group=env.spec.id)
