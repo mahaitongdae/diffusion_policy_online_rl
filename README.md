@@ -2,14 +2,14 @@
 
 This is the official implementation of
 
-** Efficient Online Reinforcement Learning for Diffusion Policies**
+**Efficient Online Reinforcement Learning for Diffusion Policies**
 
 accepted by ICML 2025.
 
 ## Installation
 
 ```bash
-# Create environemnt
+# Create environment
 conda create -n relax python=3.9 numpy tqdm tensorboardX matplotlib scikit-learn black snakeviz ipykernel setproctitle numba
 conda activate relax
 
