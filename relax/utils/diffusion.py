@@ -80,7 +80,7 @@ class BetaScheduleCoefficients:
 @dataclass(frozen=True)
 class GaussianDiffusion:
     num_timesteps: int
-    beta_schedule_scale: float = 0.3
+    beta_schedule_scale: float = 1.0
     beta_schedule_type: str = 'linear'
 
     def beta_schedule(self):
@@ -156,9 +156,10 @@ class GaussianDiffusion:
 
 if __name__ == '__main__':
     diffusion = GaussianDiffusion(20)
-    beta_schedule = diffusion.beta_schedule(scale=0.3)
+    beta_schedule = diffusion.beta_schedule()
     print("betas", beta_schedule.betas)
     print("sqrt 1 - bar alpha", beta_schedule.sqrt_one_minus_alphas_cumprod)
     print("sqrt 1 over bar alpha", beta_schedule.sqrt_recip_alphas_cumprod)
     print("sqrt 1 - bar alpha over bar alpha", beta_schedule.sqrt_recipm1_alphas_cumprod)
+    print("posterior variance,", beta_schedule.posterior_log_variance_clipped)
 

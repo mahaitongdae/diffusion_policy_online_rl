@@ -111,23 +111,25 @@ class QVPO(Algorithm):
             q2_update, q2_opt_state = self.optim.update(q2_grads, q2_opt_state)
             q1_params = optax.apply_updates(q1_params, q1_update)
             q2_params = optax.apply_updates(q2_params, q2_update)
+            new_action = self.agent.get_action(new_eval_key, (policy_params, q1_params, q2_params), obs)
 
             def policy_loss_fn(policy_params, q1_params, q2_params) -> jax.Array:
-                new_action = self.agent.get_action(new_eval_key, (policy_params, q1_params, q2_params), obs)
                 q_mean = get_min_q(obs, new_action)
-                q_weights = jnp.where(q_mean > 1., q_mean, jnp.zeros_like(q_mean))
+                q_weights = jnp.where(q_mean > 0.01, q_mean, jnp.zeros_like(q_mean)) * 5 / jnp.exp(log_alpha)
                 # q_weights = q_weights
                 
                 # Entropy regularization in QVPO
-                ent_obs_key, ent_act_key, ent_q_key = jax.random.split(entropy_key, 3)
-                shuffled_flat_obs = jax.random.permutation(ent_obs_key, obs.flatten().repeat(10))
-                rand_obs = shuffled_flat_obs.reshape((10 * obs.shape[0], obs.shape[1]))
-                rand_actions = jax.random.uniform(ent_act_key, [10 * new_action.shape[0], new_action.shape[1]],
-                                                  minval=-1, maxval=1)
-                rand_q = jax.random.permutation(ent_obs_key, q_weights.repeat(10)) * log_alpha
-                q_weights = jnp.concat([q_weights, rand_q])
-                total_obs = jnp.vstack([obs, rand_obs])
-                total_actions = jnp.vstack([new_action, rand_actions])
+                # ent_obs_key, ent_act_key, ent_q_key = jax.random.split(entropy_key, 3)
+                # shuffled_flat_obs = jax.random.permutation(ent_obs_key, obs.flatten().repeat(10))
+                # rand_obs = shuffled_flat_obs.reshape((10 * obs.shape[0], obs.shape[1]))
+                # rand_actions = jax.random.uniform(ent_act_key, [10 * new_action.shape[0], new_action.shape[1]],
+                #                                   minval=-1, maxval=1)
+                # rand_q = jax.random.permutation(ent_obs_key, q_weights.repeat(10)) * log_alpha
+                # q_weights = jnp.concat([q_weights, rand_q])
+                # total_obs = jnp.vstack([obs, rand_obs])
+                # total_actions = jnp.vstack([new_action, rand_actions])
+                total_obs = obs
+                total_actions = new_action
                 t = jax.random.randint(diffusion_time_key, (total_obs.shape[0],), 0, self.agent.num_timesteps)
 
                 def denoiser(t, x):

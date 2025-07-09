@@ -37,7 +37,7 @@ class OffPolicyTrainer:
         update_log_n_step: int = 1000,
         done_info_keys: Tuple[str, ...] = (),
         save_policy_every: int = 10000,
-        save_value: bool = True,
+        save_value: bool = False,
         hparams: Optional[dict] = None,
         policy_pkl_template: str = "policy-{sample_step}-{update_step}.pkl",
         warmup_with: str = "random",  # "policy" or "random"
