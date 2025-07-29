@@ -1,4 +1,5 @@
 from typing import NamedTuple, Tuple
+from functools import partial
 
 import jax, jax.numpy as jnp
 import numpy as np
@@ -9,6 +10,7 @@ import pickle
 from relax.algorithm.base import Algorithm
 from relax.network.dacer import DACERNet, DACERParams
 from relax.network.diffv2 import Diffv2Net, Diffv2Params
+from relax.network.diffv4 import Diffv4Net
 from relax.utils.experience import Experience
 from relax.utils.typing_utils import Metric
 
@@ -28,11 +30,11 @@ class Diffv2TrainState(NamedTuple):
     running_mean: float
     running_std: float
 
-class DPMD(Algorithm):
+class DPMDV2(Algorithm):
 
     def __init__(
         self,
-        agent: Diffv2Net,
+        agent: Diffv4Net,
         params: Diffv2Params,
         *,
         gamma: float = 0.99,
@@ -45,7 +47,9 @@ class DPMD(Algorithm):
         reward_scale: float = 0.2,
         num_samples: int = 200,
         use_ema: bool = True,
-        reweight_type: str = 'exp',  # 'exp', 'square'
+        reweight_type: str = 'logsumexp',  # 'exp', 'square'
+        learnable_alpha: bool = True,
+        kl_constraint: float = 0.1,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -65,6 +69,8 @@ class DPMD(Algorithm):
         self.alpha_optim = optax.adam(alpha_lr)
         self.entropy = 0.0
         self.reweight_type = reweight_type
+        self.learnable_alpha = learnable_alpha
+        self.kl_constraint = kl_constraint
 
         self.state = Diffv2TrainState(
             params=params,
@@ -126,37 +132,53 @@ class DPMD(Algorithm):
             q2_update, q2_opt_state = self.optim.update(q2_grads, q2_opt_state)
             q1_params = optax.apply_updates(q1_params, q1_update)
             q2_params = optax.apply_updates(q2_params, q2_update)
+            
+            batch_action, q_batch_action = self.agent.get_batch_action_with_q(
+                new_eval_key, (target_policy_params, log_alpha, target_q1_params, target_q2_params), obs
+                )
 
 
             def policy_loss_fn(policy_params) -> jax.Array:
-                q_min = get_min_q(next_obs, next_action)
-                q_mean, q_std = q_min.mean(), q_min.std()
-                if self.reweight_type == 'square':
-                    q_weights = jax.nn.relu(q_min) ** 2
-                    scaled_q = q_min
-                elif self.reweight_type == 'exp':
-                    norm_q = q_min - running_mean / running_std
-                    scaled_q = norm_q.clip(-3., 3.) / jnp.exp(log_alpha)
-                    q_weights = jnp.exp(scaled_q)
+                # q_min = get_min_q(next_obs, next_action)
+                # q_mean, q_std = q_min.mean(), q_min.std()
+                # if self.reweight_type == 'square':
+                #     q_weights = jax.nn.relu(q_min) ** 2
+                #     scaled_q = q_min
+                # elif self.reweight_type == 'exp':
+                #     norm_q = q_min - running_mean / running_std
+                #     scaled_q = norm_q.clip(-3., 3.) / jnp.exp(log_alpha)
+                #     q_weights = jnp.exp(scaled_q)
+                if self.reweight_type == 'logsumexp':
+                    scaled_q = q_batch_action / jax.nn.softplus(log_alpha)
+                    Z = jax.nn.logsumexp(scaled_q, axis=0, keepdims=True)
+                    q_weights = jnp.exp(scaled_q - Z)  # [N, B, 1]
+                    q_mean = jnp.mean(q_batch_action)
+                    q_std = jnp.std(q_batch_action, axis=0).mean()
                 else:
                     raise NotImplementedError(f"Reweight type {self.reweight_type} is not implemented.")
                 def denoiser(t, x):
-                    return self.agent.policy(policy_params, next_obs, x, t)
+                    return self.agent.policy(policy_params, obs, x, t)
                 if self.agent.use_flow:
-                    t = jax.random.uniform(diffusion_time_key, (next_obs.shape[0],))
+                    t = jax.random.uniform(diffusion_time_key, (self.agent.num_particles, obs.shape[0],))
                 else:
-                    t = jax.random.randint(diffusion_time_key, (next_obs.shape[0],), 0, self.agent.num_timesteps)
-                loss = self.agent.diffusion.weighted_p_loss(diffusion_noise_key, q_weights, denoiser, t,
-                                                            jax.lax.stop_gradient(next_action))
+                    t = jax.random.randint(diffusion_time_key, (self.agent.num_particles, obs.shape[0],), 0, self.agent.num_timesteps)
+                    
+                loss_fn = partial(self.agent.diffusion.weighted_p_loss, key=diffusion_noise_key, model=denoiser)
+                loss = jax.vmap(loss_fn)(
+                    weights=jax.lax.stop_gradient(q_weights), 
+                    t=t, 
+                    x_start=jax.lax.stop_gradient(batch_action))
+                loss = jnp.mean(loss)
+                return loss, (q_weights, scaled_q, q_mean, q_std, Z)
 
-                return loss, (q_weights, scaled_q, q_mean, q_std)
-
-            (total_loss, (q_weights, scaled_q, q_mean, q_std)), policy_grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(policy_params)
+            (total_loss, (q_weights, scaled_q, q_mean, q_std, Z)), policy_grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(policy_params)
 
             # update alpha
             def log_alpha_loss_fn(log_alpha: jax.Array) -> jax.Array:
-                approx_entropy = 0.5 * self.agent.act_dim * jnp.log( 2 * jnp.pi * jnp.exp(1) * (0.1 * jnp.exp(log_alpha)) ** 2)
-                log_alpha_loss = -1 * log_alpha * (-1 * jax.lax.stop_gradient(approx_entropy) + self.agent.target_entropy)
+                # approx_entropy = 0.5 * self.agent.act_dim * jnp.log( 2 * jnp.pi * jnp.exp(1) * (jnp.exp(log_alpha)) ** 2)
+                # kl_upper_bound = Z.squeeze(axis=0) - jnp.log(self.num_samples)
+                
+                log_alpha_loss = jax.nn.softplus(log_alpha) * (self.kl_constraint + Z.squeeze(axis=0) - jnp.log(self.num_samples))
                 return log_alpha_loss
 
             # update networks
@@ -192,7 +214,10 @@ class DPMD(Algorithm):
             q1_params, q1_opt_state = param_update(self.optim, q1_params, q1_grads, q1_opt_state)
             q2_params, q2_opt_state = param_update(self.optim, q2_params, q2_grads, q2_opt_state)
             policy_params, policy_opt_state = delay_param_update(self.policy_optim, policy_params, policy_grads, policy_opt_state)
-            log_alpha, log_alpha_opt_state = delay_alpha_param_update(self.alpha_optim, log_alpha, log_alpha_opt_state)
+            if self.learnable_alpha:
+                log_alpha, log_alpha_opt_state = delay_alpha_param_update(self.alpha_optim, log_alpha, log_alpha_opt_state)
+            else:
+                pass
 
             target_q1_params = delay_target_update(q1_params, target_q1_params, self.tau)
             target_q2_params = delay_target_update(q2_params, target_q2_params, self.tau)
@@ -216,16 +241,20 @@ class DPMD(Algorithm):
                 "q1_min": jnp.min(q1),
                 "q2_loss": q2_loss,
                 "policy_loss": total_loss,
-                "alpha": jnp.exp(log_alpha),
+                "alpha": jax.nn.softplus(log_alpha),
                 "q_weights_std": jnp.std(q_weights),
                 "q_weights_mean": jnp.mean(q_weights),
-                "q_weights_min": jnp.min(q_weights),
-                "q_weights_max": jnp.max(q_weights),
+                "q_weights_min_min": jnp.min(q_weights),
+                "q_weights_min_mean": jnp.min(q_weights, axis=0).mean(),
+                "q_weights_max_mean": jnp.max(q_weights, axis=0).mean(),
+                "q_weights_std_mean": jnp.std(q_weights, axis=0).mean(),
                 "scale_q_mean": jnp.mean(scaled_q),
-                "scale_q_std": jnp.std(scaled_q),
+                "scale_q_std": jnp.std(scaled_q, axis=0).mean(),
+                "scale_q_gap_mean": (jnp.max(scaled_q, axis=0) - jnp.min(scaled_q, axis=0)).mean(),
                 "running_q_mean": new_running_mean,
                 "running_q_std": new_running_std,
-                "entropy_approx": 0.5 * self.agent.act_dim * jnp.log( 2 * jnp.pi * jnp.exp(1) * (jnp.exp(log_alpha)) ** 2),
+                "approx_kl": jnp.mean(q_weights * (scaled_q - Z))
+                    # 0.5 * self.agent.act_dim * jnp.log( 2 * jnp.pi * jnp.exp(1) * (jnp.exp(log_alpha)) ** 2),
             }
             return state, info
 

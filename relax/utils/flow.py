@@ -9,20 +9,6 @@ class DiffusionModel(Protocol):
     def __call__(self, t: jax.Array, x: jax.Array) -> jax.Array:
         ...
 
-
-# class Diffusion:
-    
-#     @abstractmethod
-#     def p_sample(self, key: jax.Array, model: DiffusionModel, shape: Tuple[int, ...]) -> jax.Array:
-#         """Sample from the diffusion model."""
-#         ...
-    
-#     @abstractmethod
-#     def weighted_p_loss(self, key: jax.Array, weights: jax.Array, model: DiffusionModel, t: jax.Array,
-#                         x_start: jax.Array) -> jax.Array:
-#         """Compute the weighted loss for the diffusion model."""
-#         ...
-
 @dataclass(frozen=True)
 class BetaScheduleCoefficients:
     betas: jax.Array
@@ -92,7 +78,7 @@ class BetaScheduleCoefficients:
         return np.linspace(beta_start, beta_end, timesteps, dtype=np.float64)
 
 @dataclass(frozen=True)
-class GaussianDiffusion:
+class OTFlow:
     num_timesteps: int
     beta_schedule_scale: float = 0.3
     beta_schedule_type: str = 'linear'
@@ -114,29 +100,36 @@ class GaussianDiffusion:
         return model_mean, model_log_variance
     
     def get_recon(self, t: int, x: jax.Array, noise: jax.Array):
-        B = self.beta_schedule()
-        x_recon = x * B.sqrt_recip_alphas_cumprod[t][:, jnp.newaxis] - noise * B.sqrt_recipm1_alphas_cumprod[t][:, jnp.newaxis]
-        return x_recon
+        raise NotImplementedError("This method is not implemented for flow.")
+        # B = self.beta_schedule()
+        # x_recon = x * B.sqrt_recip_alphas_cumprod[t][:, jnp.newaxis] - noise * B.sqrt_recipm1_alphas_cumprod[t][:, jnp.newaxis]
+        # return x_recon
 
     def p_sample(self, key: jax.Array, model: DiffusionModel, shape: Tuple[int, ...]) -> jax.Array:
         x_key, noise_key = jax.random.split(key)
-        x = 0.5 * jax.random.normal(x_key, shape)
+        x = jax.random.normal(x_key, shape)
         noise = jax.random.normal(noise_key, (self.num_timesteps, *shape))
 
         def body_fn(x, input):
-            t, noise = input
-            noise_pred = model(t, x)
-            model_mean, model_log_variance = self.p_mean_variance(t, x, noise_pred)
-            x = model_mean + (t > 0) * jnp.exp(0.5 * model_log_variance) * noise
+            t_cur, t_next, noise = input
+            v_t_pred = model(t_cur, x)
+            x_mid = x + (t_next - t_cur) * 0.5 * v_t_pred
+            t_mid = t_cur + (t_next - t_cur) * 0.5
+            v_mid_pred = model(t_mid, x_mid)
+            x = x + (t_next - t_cur) * v_mid_pred
+            # model_mean, model_log_variance = self.p_mean_variance(t, x, noise_pred)
+            # x = model_mean + (t > 0) * jnp.exp(0.5 * model_log_variance) * noise
             return x, None
 
-        t = jnp.arange(self.num_timesteps)[::-1]
-        x, _ = jax.lax.scan(body_fn, x, (t, noise))
+        # t = jnp.arange(self.num_timesteps)[::-1]
+        t = jnp.linspace(0, 1, self.num_timesteps + 1)
+        x, _ = jax.lax.scan(body_fn, x, (t[:-1], t[1:], noise))
         return x
 
-    def q_sample(self, t: int, x_start: jax.Array, noise: jax.Array):
-        B = self.beta_schedule()
-        return B.sqrt_alphas_cumprod[t] * x_start + B.sqrt_one_minus_alphas_cumprod[t] * noise
+    def q_sample(self, t: jax.Array, x_start: jax.Array, noise: jax.Array):
+        # B = self.beta_schedule()
+        # return B.sqrt_alphas_cumprod[t] * x_start + B.sqrt_one_minus_alphas_cumprod[t] * noise
+        return (1 - t) * noise + t * x_start
 
     def p_loss(self, key: jax.Array, model: DiffusionModel, t: jax.Array, x_start: jax.Array):
         assert t.ndim == 1 and t.shape[0] == x_start.shape[0]

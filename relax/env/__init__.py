@@ -50,6 +50,9 @@ class RelaxWrapper(Wrapper):
         return obs.astype(np.float32, copy=False), reward, terminated, truncated, info
 
 def create_env(name: str, seed: int, action_seed: int = 0):
+    if 'dm_control' in name:
+        from relax.env.dmc.register import register_dm_control_envs
+        register_dm_control_envs()
     env = make(name)
     env.reset(seed=seed)
     env = RelaxWrapper(env, action_seed)

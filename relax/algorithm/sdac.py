@@ -46,7 +46,8 @@ class SDAC(Algorithm):
         delay_alpha_update: int = 250,
         delay_update: int = 2,
         reward_scale: float = 0.2,
-        num_samples: int = 200,
+        num_samples: int = 64,
+        learnable_alpha: bool = True,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -138,7 +139,7 @@ class SDAC(Algorithm):
             # tilde_at = new_action
             
             # Try muttiple samples to fit loss
-            reverse_mc_num = 64
+            reverse_mc_num = self.num_samples
             tilde_at = jnp.repeat(tilde_at, reverse_mc_num, axis=0)
             t = jnp.repeat(t, reverse_mc_num, axis=0)
             wide_obs = jnp.repeat(obs, reverse_mc_num, axis=0)
@@ -153,7 +154,7 @@ class SDAC(Algorithm):
                 #                                             jax.lax.stop_gradient(next_action))
                 noise2 = jax.random.normal(diff_key2, (action.shape[0] * reverse_mc_num, action.shape[1]))
                 recon = self.agent.diffusion.get_recon(t, tilde_at, noise2).clip(-1, 1)
-                q_min = get_min_q(wide_obs, recon) * 5. / jnp.exp(log_alpha) # 5 is the initial alpha value
+                q_min = get_min_q(wide_obs, recon) / jnp.exp(log_alpha) # 5 is the initial alpha value
                 q_mean, q_std = q_min.mean(), q_min.std()
                 q_reshape = q_min.reshape((-1, reverse_mc_num)) # [batch_size, mc_num]
                 Z = jax.nn.logsumexp(q_reshape, axis=1, keepdims=True) # [batch_size, 1]
@@ -169,11 +170,14 @@ class SDAC(Algorithm):
 
             (total_loss, (q_weights, scaled_q, q_mean, q_std, recon)), policy_grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(policy_params)
             
+            q_new_action = get_min_q(obs, new_action)
             # update alpha
             def log_alpha_loss_fn(log_alpha: jax.Array) -> jax.Array:
-                approx_entropy = 0.5 * self.agent.act_dim * jnp.log( 2 * jnp.pi * jnp.exp(1) * (0.1 * jnp.exp(log_alpha)) ** 2)
-                # log_alpha_loss = -jnp.mean(log_alpha * (-entropy + self.agent.target_entropy))
-                log_alpha_loss = -1 * log_alpha * (-1 * jax.lax.stop_gradient(approx_entropy) + self.agent.target_entropy)
+                # approx_entropy = 0.5 * self.agent.act_dim * jnp.log( 2 * jnp.pi * jnp.exp(1) * (jnp.exp(log_alpha)) ** 2)
+                # # log_alpha_loss = -jnp.mean(log_alpha * (-entropy + self.agent.target_entropy))
+                # log_alpha_loss = -1 * log_alpha * (-1 * jax.lax.stop_gradient(approx_entropy) + self.agent.target_entropy)
+                logp = q_new_action / jax.nn.softplus(log_alpha)
+                log_alpha_loss = -jnp.mean(log_alpha * (logp + self.agent.target_entropy))
                 return log_alpha_loss
 
             # update networks

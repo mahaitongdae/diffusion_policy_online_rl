@@ -32,6 +32,10 @@ def main():
     indices = [int(i) for i in args.index.split(",")]
     seeds = [int(i) for i in args.seed.split(",")]
     assert len(indices) == len(seeds)
+    
+    if 'dm_control' in args.env:
+        from relax.env.dmc.register import register_dm_control_envs
+        register_dm_control_envs()
 
     envs = []
     for seed in seeds:

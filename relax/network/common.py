@@ -30,7 +30,7 @@ class WithSquashedGaussianPolicy:
         mean, std = self.policy(policy_params, obs)
         z = jax.random.normal(key, mean.shape)
         act = mean + std * z
-        logp = Normal(mean, std).log_prob(act) # - 2 * (math.log(2) - act - jax.nn.softplus(-2 * act))
+        logp = Normal(mean, std).log_prob(act) - 2 * (math.log(2) - act - jax.nn.softplus(-2 * act))
         return jnp.tanh(act), logp.sum(axis=-1)
 
 @dataclass
