@@ -41,6 +41,7 @@ class OffPolicyTrainer:
         hparams: Optional[dict] = None,
         policy_pkl_template: str = "policy-{sample_step}-{update_step}.pkl",
         warmup_with: str = "random",  # "policy" or "random"
+        wandb_group: str = "None",
     ):
         self.env = env
         self.algorithm = algorithm
@@ -81,7 +82,7 @@ class OffPolicyTrainer:
         wandb.init(project="diffusion_online_rl",
                    name=log_path.name,
                    dir=log_path,
-                   group=env.spec.id,
+                   group=wandb_group,
                    config=hparams if hparams is not None else {})
 
     def setup(self, dummy_data: Experience):

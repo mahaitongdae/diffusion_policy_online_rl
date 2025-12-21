@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--noise_scale", type=float, default=0.1)
     parser.add_argument("--cluster", default=False, action="store_true")
     parser.add_argument("--debug", action='store_true', default=False)
-    parser.add_argument("--beta_schedule_scale", type=float, default=0.8)
+    parser.add_argument("--beta_schedule_scale", type=float, default=1.0)
     parser.add_argument("--beta_schedule_type", type=str, default='linear')
     parser.add_argument("--learnable_alpha", default=False, action='store_true')
     parser.add_argument("--update_additive_noise_scale", default=False, action='store_true')
@@ -66,6 +66,7 @@ if __name__ == "__main__":
     parser.add_argument("--init_alpha", type=float, default=1e-4)
     parser.add_argument("--reweight_type", type=str, default='logsumexp')  # 'exp', 'none'
     parser.add_argument("--alpha_transformation", type=str, default="None") # 'None', 'softplus', 'exp'
+    parser.add_argument("--wandb_group", type=str, default="None")
     args = parser.parse_args()
 
     if args.debug:
@@ -222,6 +223,7 @@ if __name__ == "__main__":
         log_path=exp_dir,
         update_log_n_step=1 if args.debug else 1000,
         hparams=args_dict,
+        wandb_group=args.wandb_group
     )
 
     trainer.setup(Experience.create_example(obs_dim, act_dim, trainer.batch_size))
