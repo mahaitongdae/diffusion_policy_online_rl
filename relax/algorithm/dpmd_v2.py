@@ -125,19 +125,19 @@ class DPMDV2(Algorithm):
 
             reward *= self.reward_scale
 
-            def get_min_q(s, a):
-                q1 = self.agent.q(q1_params, s, a)
-                q2 = self.agent.q(q2_params, s, a)
-                q = jnp.minimum(q1, q2)
-                return q
+            # def get_min_q(s, a):
+            #     q1 = self.agent.q(q1_params, s, a)
+            #     q2 = self.agent.q(q2_params, s, a)
+            #     q = jnp.minimum(q1, q2)
+            #     return q
 
-            def get_min_taret_q(s, a):
-                q1 = self.agent.q(target_q1_params, s, a)
-                q2 = self.agent.q(target_q2_params, s, a)
-                q = jnp.minimum(q1, q2)
-                return q
+            # def get_min_taret_q(s, a):
+            #     q1 = self.agent.q(target_q1_params, s, a)
+            #     q2 = self.agent.q(target_q2_params, s, a)
+            #     q = jnp.minimum(q1, q2)
+            #     return q
 
-            next_action = self.agent.get_action(next_eval_key, (policy_params, alpha_variable, q1_params, q2_params), next_obs)
+            next_action = self.agent.get_action(next_eval_key, (policy_params, -jnp.inf, q1_params, q2_params), next_obs)  # no random noise added in PEV
             q1_target = self.agent.q(target_q1_params, next_obs, next_action)
             q2_target = self.agent.q(target_q2_params, next_obs, next_action)
             q_target = jnp.minimum(q1_target, q2_target)
