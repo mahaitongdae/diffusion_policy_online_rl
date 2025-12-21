@@ -11,14 +11,15 @@ from relax.utils.diffusion import GaussianDiffusion
 from relax.utils.flow import OTFlow
 from relax.utils.jax_utils import random_key_from_data
 
-class Diffv2Params(NamedTuple):
+class Diffv4Params(NamedTuple):
     q1: hk.Params
     q2: hk.Params
     target_q1: hk.Params
     target_q2: hk.Params
     policy: hk.Params
     target_poicy: hk.Params
-    log_alpha: jax.Array
+    alpha_variable: jax.Array
+    log_noise_scale: jax.Array
 
 
 @dataclass
@@ -46,17 +47,26 @@ class Diffv4Net:
             
 
     def get_action(self, key: jax.Array, policy_params: hk.Params, obs: jax.Array) -> jax.Array:
-        policy_params, log_alpha, q1_params, q2_params = policy_params
+        """
+        Used
+        1. For get atp1 in learning q function
+        2. for getting action in eval.
+        
+        """
+        policy_params, log_noise_scale, q1_params, q2_params = policy_params
 
         def model_fn(t, x):
             return self.policy(policy_params, obs, x, t)
 
         def sample(key: jax.Array) -> Union[jax.Array, jax.Array]:
             act = self.diffusion.p_sample(key, model_fn, (*obs.shape[:-1], self.act_dim))
+            return act.clip(-1, 1)
+
+        def q_fn(act: jax.Array) -> jax.Array:
             q1 = self.q(q1_params, obs, act)
             q2 = self.q(q2_params, obs, act)
             q = jnp.minimum(q1, q2)
-            return act.clip(-1, 1), q
+            return q
 
         key, noise_key = jax.random.split(key)
         # assert self.num_particles > 1
@@ -64,24 +74,29 @@ class Diffv4Net:
             act = sample(key)[0]
         else:
             keys = jax.random.split(key, self.num_best_of_n)
-            acts, qs = jax.vmap(sample)(keys)
+            acts = jax.vmap(sample)(keys)
+            acts = acts + jax.random.normal(noise_key, acts.shape) * jnp.exp(log_noise_scale)
+            qs = jax.vmap(q_fn)(acts)
             q_best_ind = jnp.argmax(qs, axis=0, keepdims=True)
             act = jnp.take_along_axis(acts, q_best_ind[..., None], axis=0).squeeze(axis=0)
-        act = act + jax.random.normal(noise_key, act.shape) * self.noise_scale
+        
         return act
 
     def get_batch_action_with_q(self, key: jax.Array, policy_params: hk.Params, obs: jax.Array) -> Tuple[jax.Array, jax.Array]:
-        policy_params, log_alpha, q1_params, q2_params = policy_params
+        policy_params, log_noise_scale, q1_params, q2_params = policy_params
 
         def model_fn(t, x):
             return self.policy(policy_params, obs, x, t)
 
         def sample(key: jax.Array) -> Union[jax.Array, jax.Array]:
             act = self.diffusion.p_sample(key, model_fn, (*obs.shape[:-1], self.act_dim))
+            return act.clip(-1, 1)
+        
+        def q_fn(act: jax.Array) -> jax.Array:
             q1 = self.q(q1_params, obs, act)
-            # q2 = self.q(q2_params, obs, act)
-            # q = jnp.minimum(q1, q2)
-            return act.clip(-1, 1), q1
+            q2 = self.q(q2_params, obs, act)
+            q = jnp.minimum(q1, q2)
+            return q
 
         key, noise_key = jax.random.split(key)
         assert self.num_particles > 1
@@ -89,19 +104,20 @@ class Diffv4Net:
         #     act = sample(key)[0]
         # else:
         keys = jax.random.split(key, self.num_particles)
-        acts, qs = jax.vmap(sample)(keys)
+        acts = jax.vmap(sample)(keys)
         #     q_best_ind = jnp.argmax(qs, axis=0, keepdims=True)
         #     act = jnp.take_along_axis(acts, q_best_ind[..., None], axis=0).squeeze(axis=0)
-        # act = act + jax.random.normal(noise_key, act.shape) * jnp.exp(log_alpha) * self.noise_scale
+        acts = acts + jax.random.normal(noise_key, acts.shape) * jnp.exp(log_noise_scale)
+        qs = jax.vmap(q_fn)(acts)
         return acts, qs
 
 
 
     def get_deterministic_action(self, policy_params: hk.Params, obs: jax.Array) -> jax.Array:
         key = random_key_from_data(obs)
-        policy_params, log_alpha, q1_params, q2_params = policy_params
-        log_alpha = -jnp.inf
-        policy_params = (policy_params, log_alpha, q1_params, q2_params)
+        policy_params, log_noise_scale, q1_params, q2_params = policy_params
+        log_noise_scale = -jnp.inf
+        policy_params = (policy_params, log_noise_scale, q1_params, q2_params)
         return self.get_action(key, policy_params, obs)
 
     def q_evaluate(
@@ -128,11 +144,20 @@ def create_diffv4_net(
     # target_kl_constraint: float = 0.01,
     beta_schedule_scale: float = 0.3,
     use_flow: bool = False,
-    initial_log_alpha: float = math.log(0.3),  # math.log(3) or math.log(5) choose one
-    ) -> Tuple[Diffv4Net, Diffv2Params]:
+    initial_alpha: float = 1e-4,  # math.log(3) or math.log(5) choose one
+    alpha_transformation: str = 'softplus',
+    initial_log_noise_scale: float = math.log(0.5),
+    ) -> Tuple[Diffv4Net, Diffv4Params]:
     # q = hk.without_apply_rng(hk.transform(lambda obs, act: DistributionalQNet2(hidden_sizes, activation)(obs, act)))
     q = hk.without_apply_rng(hk.transform(lambda obs, act: QNet(hidden_sizes, activation)(obs, act)))
     policy = hk.without_apply_rng(hk.transform(lambda obs, act, t: DACERPolicyNet(diffusion_hidden_sizes, activation)(obs, act, t)))
+
+    if alpha_transformation == 'softplus':
+        initial_alpha_variable = jnp.log(jnp.exp(initial_alpha) - 1)
+    elif alpha_transformation == 'exp':
+        initial_alpha_variable = jnp.log(initial_alpha)
+    elif alpha_transformation == 'None':
+        initial_alpha_variable = initial_alpha
 
     @jax.jit
     def init(key, obs, act):
@@ -143,8 +168,9 @@ def create_diffv4_net(
         target_q2_params = q2_params
         policy_params = policy.init(policy_key, obs, act, 0)
         target_policy_params = policy_params
-        log_alpha = jnp.array(initial_log_alpha, dtype=jnp.float32) # math.log(3) or math.log(5) choose one
-        return Diffv2Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, log_alpha)
+        alpha_variable = jnp.array(initial_alpha_variable, dtype=jnp.float32) # math.log(3) or math.log(5) choose one
+        log_noise_scale = jnp.array(initial_log_noise_scale, dtype=jnp.float32)
+        return Diffv4Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, alpha_variable, log_noise_scale)
 
     sample_obs = jnp.zeros((1, obs_dim))
     sample_act = jnp.zeros((1, act_dim))

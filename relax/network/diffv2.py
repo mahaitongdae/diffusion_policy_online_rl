@@ -44,7 +44,7 @@ class Diffv2Net:
             return OTFlow(self.num_timesteps,)
             
 
-    def get_action(self, key: jax.Array, policy_params: hk.Params, obs: jax.Array) -> jax.Array:
+    def get_action(self, key: jax.Array, policy_params: hk.Params, obs: jax.Array) -> Tuple[jax.Array, dict]:
         policy_params, log_alpha, q1_params, q2_params = policy_params
 
         def model_fn(t, x):
@@ -66,7 +66,10 @@ class Diffv2Net:
             q_best_ind = jnp.argmax(qs, axis=0, keepdims=True)
             act = jnp.take_along_axis(acts, q_best_ind[..., None], axis=0).squeeze(axis=0)
         act = act + jax.random.normal(noise_key, act.shape) * jnp.exp(log_alpha) * self.noise_scale
-        return act
+        info = {
+            'action_std': jnp.std(act, axis=0).mean(),
+        }
+        return act, info
 
     def get_batch_actions(self, key: jax.Array, policy_params: hk.Params, obs: jax.Array, q_func: Callable) -> jax.Array:
         batch_flatten_obs = obs.repeat(self.num_particles, axis=0)
@@ -110,6 +113,7 @@ def create_diffv2_net(
     target_entropy_scale: float = 0.9,
     beta_schedule_scale: float = 0.3,
     use_flow: bool = False,
+    initial_log_alpha: float = math.log(5),
     ) -> Tuple[Diffv2Net, Diffv2Params]:
     # q = hk.without_apply_rng(hk.transform(lambda obs, act: DistributionalQNet2(hidden_sizes, activation)(obs, act)))
     q = hk.without_apply_rng(hk.transform(lambda obs, act: QNet(hidden_sizes, activation)(obs, act)))
@@ -124,7 +128,7 @@ def create_diffv2_net(
         target_q2_params = q2_params
         policy_params = policy.init(policy_key, obs, act, 0)
         target_policy_params = policy_params
-        log_alpha = jnp.array(math.log(0.3), dtype=jnp.float32) # math.log(3) or math.log(5) choose one
+        log_alpha = jnp.array(initial_log_alpha, dtype=jnp.float32) # math.log(3) or math.log(5) choose one
         return Diffv2Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, log_alpha)
 
     sample_obs = jnp.zeros((1, obs_dim))

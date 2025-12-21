@@ -200,7 +200,7 @@ def mlp(hidden_sizes: Sequence[int], output_size: int, activation: Activation, o
     layers = []
     for hidden_size in hidden_sizes:
         layers += [hk.Linear(hidden_size), activation]
-    layers += [hk.Linear(output_size), output_activation]
+    layers += [hk.Linear(output_size, w_init=hk.initializers.VarianceScaling(1e-4)), output_activation]
     if squeeze_output:
         layers.append(partial(jnp.squeeze, axis=-1))
     return hk.Sequential(layers)

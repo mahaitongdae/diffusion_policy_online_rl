@@ -39,7 +39,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--alg", type=str, default="dpmdv2")
     parser.add_argument("--env", type=str, default="HalfCheetah-v4")
-    parser.add_argument("--suffix", type=str, default="test_use_atp1")
+    parser.add_argument("--suffix", type=str, default="debug")
     parser.add_argument("--num_vec_envs", type=int, default=5)
     parser.add_argument("--hidden_num", type=int, default=3)
     parser.add_argument("--hidden_dim", type=int, default=256)
@@ -51,17 +51,21 @@ if __name__ == "__main__":
     parser.add_argument("--lr_schedule_end", type=float, default=3e-5)
     parser.add_argument("--alpha_lr", type=float, default=7e-3)
     parser.add_argument("--delay_alpha_update", type=float, default=250)
+    parser.add_argument("--delay_log_noise_scale_update", type=float, default=250)
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--num_particles", type=int, default=4)
-    parser.add_argument("--num_best_of_n", type=int, default=4)
-    parser.add_argument("--noise_scale", type=float, default=1.0)
+    parser.add_argument("--num_best_of_n", type=int, default=32)
+    parser.add_argument("--noise_scale", type=float, default=0.1)
     parser.add_argument("--cluster", default=False, action="store_true")
     parser.add_argument("--debug", action='store_true', default=False)
     parser.add_argument("--beta_schedule_scale", type=float, default=0.8)
     parser.add_argument("--beta_schedule_type", type=str, default='linear')
-    parser.add_argument("--learnable_alpha", type=bool, default=False, action='store_true')
-    parser.add_argument("--kl_constraint", type=float, default=0.1)
-    parser.add_argument("--init_alpha", type=float, default=0.3)
+    parser.add_argument("--learnable_alpha", default=False, action='store_true')
+    parser.add_argument("--update_additive_noise_scale", default=False, action='store_true')
+    parser.add_argument("--kl_constraint", type=float, default=1.0)
+    parser.add_argument("--init_alpha", type=float, default=1e-4)
+    parser.add_argument("--reweight_type", type=str, default='logsumexp')  # 'exp', 'none'
+    parser.add_argument("--alpha_transformation", type=str, default="None") # 'None', 'softplus', 'exp'
     args = parser.parse_args()
 
     if args.debug:
@@ -118,7 +122,12 @@ if __name__ == "__main__":
                                           num_particles=args.num_particles, 
                                           noise_scale=args.noise_scale,
                                           beta_schedule_scale=args.beta_schedule_scale)
-        algorithm = DPMD(agent, params, lr=args.lr, alpha_lr=args.alpha_lr, delay_alpha_update=args.delay_alpha_update, lr_schedule_end=args.lr_schedule_end)
+        algorithm = DPMD(agent, params,
+                         lr=args.lr, 
+                         alpha_lr=args.alpha_lr, 
+                         delay_alpha_update=args.delay_alpha_update, 
+                         lr_schedule_end=args.lr_schedule_end,
+                         reweight_type=args.reweight_type,)
     elif args.alg == 'dpmdv2':
         import math
         def mish(x: jax.Array):
@@ -129,13 +138,18 @@ if __name__ == "__main__":
                                           num_best_of_n=args.num_best_of_n,
                                           noise_scale=args.noise_scale,
                                           beta_schedule_scale=args.beta_schedule_scale,
-                                          initial_log_alpha=math.log(args.init_alpha))
+                                          initial_alpha=args.init_alpha,
+                                          alpha_transformation=args.alpha_transformation)
         algorithm = DPMDV2(agent, params, lr=args.lr, 
                            alpha_lr=args.alpha_lr, 
                            delay_alpha_update=args.delay_alpha_update, 
                            lr_schedule_end=args.lr_schedule_end,
                            learnable_alpha=args.learnable_alpha,
-                           kl_constraint=args.kl_constraint)
+                           kl_constraint=args.kl_constraint,
+                           update_additive_noise_scale=args.update_additive_noise_scale,
+                           alpha_transformation=args.alpha_transformation,
+                           reweight_type=args.reweight_type,
+                           delay_log_noise_scale_update=args.delay_log_noise_scale_update)
     elif args.alg == 'idem':
         def mish(x: jax.Array):
             return x * jnp.tanh(jax.nn.softplus(x))
@@ -194,6 +208,7 @@ if __name__ == "__main__":
         PROJECT_ROOT = Path('/n/netscratch/nali_lab_seas/Lab/haitongma/sdac_logs')
     
     exp_dir = PROJECT_ROOT / "logs" / args.env / (args.alg + '_' + time.strftime("%Y-%m-%d_%H-%M-%S") + f'_s{args.seed}_{args.suffix}')
+    args_dict = vars(args)
     trainer = OffPolicyTrainer(
         env=env,
         algorithm=algorithm,
@@ -206,13 +221,14 @@ if __name__ == "__main__":
         warmup_with="random",
         log_path=exp_dir,
         update_log_n_step=1 if args.debug else 1000,
+        hparams=args_dict,
     )
 
     trainer.setup(Experience.create_example(obs_dim, act_dim, trainer.batch_size))
     log_git_details(log_file=os.path.join(exp_dir, 'dacer.diff'))
     
     # Save the arguments to a YAML file
-    args_dict = vars(args)
+    
     with open(os.path.join(exp_dir, 'config.yaml'), 'w') as yaml_file:
         yaml.dump(args_dict, yaml_file)
     trainer.run(train_key)

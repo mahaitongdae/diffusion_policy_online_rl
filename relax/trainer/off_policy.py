@@ -81,7 +81,8 @@ class OffPolicyTrainer:
         wandb.init(project="diffusion_online_rl",
                    name=log_path.name,
                    dir=log_path,
-                   group=env.spec.id)
+                   group=env.spec.id,
+                   config=hparams if hparams is not None else {})
 
     def setup(self, dummy_data: Experience):
         self.algorithm.warmup(dummy_data)

@@ -61,7 +61,12 @@ if __name__ == "__main__":
     policy = PersistFunction.load(args.policy_root / "deterministic.pkl")
     @jax.jit
     def policy_fn(policy_params, obs):
-        return policy(policy_params, obs).clip(-1, 1)
+        policy_output = policy(policy_params, obs)
+        if isinstance(policy_output, tuple):
+            act, _ = policy_output
+        else:
+            act = policy_output
+        return act.clip(-1.0, 1.0)
 
     # logger = SummaryWriter(args.policy_root)
     logger = Logger(args.policy_root)
