@@ -4,9 +4,17 @@ import os
 import dill as pickle
 import re
 import types
-from typing import Callable, List
+from typing import Callable, List, Optional
 import numpy as np
-import jax, jax.core, jaxlib.xla_client
+import jax, jaxlib.xla_client
+from jax import export as jax_export
+
+# Compatibility alias: prefer new extension core in JAX >= 0.6.0
+if jax.__version__ >= "0.6.0":
+    # jax_core = jax.extend.core
+    from jax.extend import core as jax_core
+else:
+    jax_core = jax.core
 
 PATTERN = re.compile(r"^jax")
 
@@ -19,7 +27,7 @@ def initialize_primitives(pattern: re.Pattern = PATTERN):
     for mod_name, mod in sys.modules.items():
         if pattern.match(mod_name):
             for name, obj in mod.__dict__.items():
-                if isinstance(obj, jax.core.Primitive):
+                if isinstance(obj, jax_core.Primitive):
                     registry[obj.name] = obj
     return registry
 
@@ -33,11 +41,21 @@ def make_persist(f: Callable):
     def make_persist_f(*args) -> PersistFunction:
         in_flat, in_tree = jax.tree.flatten(args)
         in_descr_flat = [jax.ShapeDtypeStruct(x.shape, x.dtype) for x in in_flat]
-        closed_jaxpr, out_descr = jax.make_jaxpr(f, return_shape=True)(*args)
+        # Compute output structure descriptors without executing
+        out_descr = jax.eval_shape(f, *args)
         out_descr_flat, out_tree = jax.tree_util.tree_flatten(out_descr)
 
-        assert all(x.named_shape == {} and x.sharding is None for x in in_descr_flat)
-        assert all(x.named_shape == {} and x.sharding is None for x in out_descr_flat)
+        # In newer JAX versions, ShapeDtypeStruct may not have named_shape/sharding.
+        def _ok_struct(s):
+            named_shape_ok = (not hasattr(s, "named_shape")) or (s.named_shape == {})
+            sharding_ok = (not hasattr(s, "sharding")) or (s.sharding is None)
+            return named_shape_ok and sharding_ok
+        assert all(_ok_struct(x) for x in in_descr_flat)
+        assert all(_ok_struct(x) for x in out_descr_flat)
+
+        # Export and serialize function using jax.export
+        exported = jax_export.export(jax.jit(f))(*args)
+        exported_bytes = exported.serialize()
 
         if sig is not None:
             # def f(a, /, b, *args, c, **kwargs): ...
@@ -59,31 +77,30 @@ def make_persist(f: Callable):
         else:
             arg_names = [f"*args[{i}]" for i in range(len(args))]
 
-        return PersistFunction(closed_jaxpr, in_tree, in_descr_flat, out_tree, out_descr_flat, arg_names)
+        return PersistFunction(exported_bytes, in_tree, in_descr_flat, out_tree, out_descr_flat, arg_names)
 
     return make_persist_f
 
 class PersistFunction:
     def __init__(
         self,
-        closed_jaxpr: jax.core.ClosedJaxpr,
+        exported_bytes: bytes,
         in_tree: jax.tree_util.PyTreeDef,
         in_descr_flat: List[jax.ShapeDtypeStruct],
         out_tree: jax.tree_util.PyTreeDef,
         out_descr_flat: List[jax.ShapeDtypeStruct],
         arg_names: List[str],
     ):
-        self.closed_jaxpr = closed_jaxpr
+        self.exported_bytes = exported_bytes
         self.in_tree = in_tree
         self.in_descr_flat = in_descr_flat
         self.out_tree = out_tree
         self.out_descr_flat = out_descr_flat
         self.arg_names = arg_names
+        self._exported = None  # type: Optional[jax_export.Exported]
 
-        jaxpr: jax.core.Jaxpr = closed_jaxpr.jaxpr
-        assert not jaxpr.effects
-        # Consider add
-        # assert jaxpr.debug_info is None, breakpoint()
+        # Sanity check: ensure we can deserialize when needed; defer actual work
+        # until call() to keep pickles small and portable.
 
     def __call__(self, *args):
         in_flat, in_tree = jax.tree_util.tree_flatten(args)
@@ -91,10 +108,13 @@ class PersistFunction:
             raise ValueError(f"Expected input tree structure {self.in_tree}, got {in_tree}")
         for arg, descr in zip(in_flat, self.in_descr_flat):
             assert_compatible(arg, descr)
-        out_flat = jax.core.eval_jaxpr(self.closed_jaxpr.jaxpr, self.closed_jaxpr.consts, *in_flat)
+        self._ensure_exported()
+        # Call exported function with structured args; it returns structured outputs
+        out = self._exported.call(*args)
+        out_flat, _ = jax.tree_util.tree_flatten(out)
         for arg, descr in zip(out_flat, self.out_descr_flat):
             assert_compatible(arg, descr)
-        return jax.tree_util.tree_unflatten(self.out_tree, out_flat)
+        return out
 
     @property
     def in_descr(self):
@@ -137,14 +157,26 @@ class PersistFunction:
         pp = CustomPrettyPrinter()
         in_info = "\n\n".join(arg_format(name, descr) for name, descr in zip(self.arg_names, self.in_descr))
         out_info = pp.pformat(self.out_descr)
+        # Try to include export IR text if available
+        export_info = ""
+        try:
+            self._ensure_exported()
+            if hasattr(self._exported, "as_text"):
+                export_info = self._exported.as_text()
+        except Exception:
+            export_info = "Exported with jax.export (IR text unavailable)"
         return f"Exported with Jax version {jax.__version__}\n\n" \
                f"--------- In ---------\n{in_info}\n\n" \
                f"--------- Out ---------\n{out_info}\n\n" \
-               f"--------- Jaxpr ---------\n{self.closed_jaxpr.pretty_print(use_color=use_color)}"
+               f"--------- Export ---------\n{export_info}"
+
+    def _ensure_exported(self):
+        if self._exported is None:
+            self._exported = jax_export.deserialize(self.exported_bytes)
 
 class PersistFunctionPickler(pickle.Pickler):
     def persistent_id(self, obj):
-        if isinstance(obj, jax.core.Primitive):
+        if isinstance(obj, jax_core.Primitive):
             if obj.name in BLACKLIST:
                 raise pickle.PickleError(f"Cannot pickle {obj.name}")
             return f"P:{obj.name}"
@@ -158,6 +190,19 @@ class PersistFunctionUnpickler(pickle.Unpickler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.registry = initialize_primitives()
+
+    # Remap classes that moved from jax.core -> jax.extend.core in JAX >= 0.6.0
+    def find_class(self, module, name):
+        print(module, name)
+        try:
+            # Prefer remapping jax.core.* to jax.extend.core.* when available
+            if "jax._src.core" in module:  # new jax core module name
+                candidate = getattr(jax_core, name, None)
+                if candidate is not None:
+                    return candidate
+        except Exception:
+            pass
+        return super().find_class(module, name)
 
     def persistent_load(self, pid):
         if not isinstance(pid, str):
