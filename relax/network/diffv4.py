@@ -156,8 +156,10 @@ def create_diffv4_net(
         initial_alpha_variable = jnp.log(jnp.exp(initial_alpha) - 1)
     elif alpha_transformation == 'exp':
         initial_alpha_variable = jnp.log(initial_alpha)
-    elif alpha_transformation == 'None':
+    elif alpha_transformation == 'identity':
         initial_alpha_variable = initial_alpha
+    else:
+        raise NotImplementedError(f"Alpha transformation {alpha_transformation} is not implemented.")
 
     @jax.jit
     def init(key, obs, act):

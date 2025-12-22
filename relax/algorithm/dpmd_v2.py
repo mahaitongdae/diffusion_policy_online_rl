@@ -119,8 +119,10 @@ class DPMDV2(Algorithm):
                 alpha_transform_fn = jax.nn.softplus
             elif self.alpha_transformation == 'exp':
                 alpha_transform_fn = jnp.exp
-            else:
+            elif self.alpha_transformation == 'identity':
                 alpha_transform_fn = lambda x: x
+            else:
+                raise NotImplementedError(f"Alpha transformation {self.alpha_transformation} is not implemented.")
             alpha = alpha_transform_fn(alpha_variable)
 
             reward *= self.reward_scale
@@ -170,9 +172,10 @@ class DPMDV2(Algorithm):
                 #     scaled_q = q_min
                 if self.reweight_type == 'normalized_relu_linear':
                     assert not self.learnable_alpha, "normalized_relu_linear is not compatible with learnable_alpha"
+                    assert self.alpha_transformation == 'identity', "normalized_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
-                    q_normalized = (q_batch_action - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_normalized = (q_batch_action + alpha - batch_q_mean) / (batch_q_std + 1e-6)
                     q_weights = jax.nn.relu(q_normalized)
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
@@ -180,9 +183,10 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_relu_square':
                     assert not self.learnable_alpha, "normalized_relu_square is not compatible with learnable_alpha"
+                    assert self.alpha_transformation == 'identity', "normalized_relu_square is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
-                    q_normalized = (q_batch_action - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_normalized = (q_batch_action + alpha - batch_q_mean) / (batch_q_std + 1e-6)
                     q_weights = jax.nn.relu(q_normalized) ** 2
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
@@ -190,9 +194,10 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_leaky_relu_linear':
                     assert not self.learnable_alpha, "normalized_leaky_relu_linear is not compatible with learnable_alpha"
+                    assert self.alpha_transformation == 'identity', "normalized_leaky_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
-                    q_normalized = (q_batch_action - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
                     q_weights = jax.nn.leaky_relu(q_normalized)
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
