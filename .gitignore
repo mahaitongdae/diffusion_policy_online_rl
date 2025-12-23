@@ -24,3 +24,4 @@ __pycache__/
 multirun/
 wandb/
 .DS_Store
+**logs**.txt
