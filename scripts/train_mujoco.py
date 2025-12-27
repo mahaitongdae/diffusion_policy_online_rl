@@ -67,6 +67,7 @@ if __name__ == "__main__":
     parser.add_argument("--reweight_type", type=str, default='logsumexp')  # 'exp', 'none'
     parser.add_argument("--alpha_transformation", type=str, default="None") # 'None', 'softplus', 'exp'
     parser.add_argument("--wandb_group", type=str, default="None")
+    parser.add_argument("--use_flow", default=False, action='store_true')
     args = parser.parse_args()
 
     if args.debug:
@@ -140,7 +141,8 @@ if __name__ == "__main__":
                                           noise_scale=args.noise_scale,
                                           beta_schedule_scale=args.beta_schedule_scale,
                                           initial_alpha=args.init_alpha,
-                                          alpha_transformation=args.alpha_transformation)
+                                          alpha_transformation=args.alpha_transformation,
+                                          use_flow=args.use_flow)
         algorithm = DPMDV2(agent, params, lr=args.lr, 
                            alpha_lr=args.alpha_lr, 
                            delay_alpha_update=args.delay_alpha_update, 
