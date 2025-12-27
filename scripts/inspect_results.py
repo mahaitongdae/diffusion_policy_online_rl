@@ -4,6 +4,7 @@ import relax
 from pathlib import Path
 import re
 import csv
+import os
 import pandas as pd
 
 from matplotlib import pyplot as plt
@@ -46,7 +47,7 @@ def load_best_results(pattern, env_name, show_df=False,
     # pattern = r".*diffv2.*noise_scale_0\.0\d$"
     # pattern = r".*diffv2.*noise_scale_0\.09"
     # pattern = r".*qsm.*01-07.*qsm_lr_schedule$"
-    
+    os.makedirs(logdir, exist_ok=True)
     matching_dir = [s for s in logdir.iterdir() if re.match(pattern, str(s))]
     dfs = []
     for dir in matching_dir:
@@ -59,6 +60,9 @@ def load_best_results(pattern, env_name, show_df=False,
         # if 'lr_end' in dir:
         #     sliced_df.loc['lr_end'] = dir.split('lr_end_')[1]
         dfs.append(sliced_df)
+    if len(dfs) == 0:
+        print(f"No results found for {pattern}")
+        return None
     total_df = pd.concat(dfs, ignore_index=True, axis=1).T
     if show_df:
         print(total_df.to_markdown())
