@@ -21,6 +21,9 @@ def register_dm_control_envs():
         ("cheetah", "run"),
         ("dog", "run"),
         ("humanoid", "run"),
+        ("acrobot", "swingup_sparse"),
+        ("cartpole", "balance_sparse"),
+        ("cartpole", "swingup_sparse"),
     ]
 
     for domain, task in dm_control_envs:
