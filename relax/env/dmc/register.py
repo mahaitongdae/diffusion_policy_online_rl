@@ -1,4 +1,5 @@
 from relax.env.dmc.wrapper import DMControlToGymWrapper
+from relax.env.dmc.custom_dmc_tasks import cheetah_reward  # register cheetah_reward environment
 from gymnasium.envs.registration import register
 
 def make_dm_control_env(domain_name, task_name, render_size=(640, 480), **kwargs):
@@ -19,6 +20,9 @@ def register_dm_control_envs():
         ("finger", "spin"),
         ("reacher", "hard"),
         ("cheetah", "run"),
+        ("cheetah", "run_sparse"),
+        ("cheetah", "run_quadratic"),
+        ("cheetah", "run_reciprocal"),
         ("dog", "run"),
         ("humanoid", "run"),
         ("acrobot", "swingup_sparse"),

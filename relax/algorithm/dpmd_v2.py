@@ -58,6 +58,7 @@ class DPMDV2(Algorithm):
         alpha_transformation: str = 'None',
         use_analytical_alpha_grad: bool = True,
         delay_log_noise_scale_update: int = 250,
+        clipped_lower_bound: float = -0.1,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -205,11 +206,13 @@ class DPMDV2(Algorithm):
                     entropy_weights = jax.nn.relu(q_normalized)
                     entropy = jax.scipy.special.entr(entropy_weights / entropy_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'normalized_sigmoid_linear':
-                    assert not self.learnable_alpha, "normalized_sigmoid_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_sigmoid_linear is not compatible with alpha_transformation != identity"
+                    # assert not self.learnable_alpha, "normalized_sigmoid_linear is not compatible with learnable_alpha"
+                    # assert self.alpha_transformation == 'identity', "normalized_sigmoid_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
-                    q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_normalized = (q_batch_action - batch_q_mean) / (batch_q_std + 1e-6)
+                    if self.learnable_alpha:
+                        q_normalized = q_normalized / alpha
                     q_weights = jax.nn.sigmoid(q_normalized)
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
@@ -239,6 +242,31 @@ class DPMDV2(Algorithm):
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
                     entropy_weights = jax.nn.relu(q_weights)
+                    entropy = jax.scipy.special.entr(entropy_weights / entropy_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
+                elif self.reweight_type == 'normalized_clipped_linear':
+                    assert not self.learnable_alpha, "normalized_leaky_relu_linear is not compatible with learnable_alpha"
+                    assert self.alpha_transformation == 'identity', "normalized_leaky_relu_linear is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy_weights = jax.nn.relu(q_normalized)
+                    entropy = jax.scipy.special.entr(entropy_weights / entropy_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
+                elif self.reweight_type == 'normalized_clipped_square':
+                    assert not self.learnable_alpha, "normalized_leaky_relu_linear is not compatible with learnable_alpha"
+                    assert self.alpha_transformation == 'identity', "normalized_leaky_relu_linear is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
+                    q_weights = jnp.where(q_weights > 0, q_weights ** 2, q_weights)
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy_weights = jax.nn.relu(q_normalized)
                     entropy = jax.scipy.special.entr(entropy_weights / entropy_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'logsumexp':
                     scaled_q = q_batch_action / alpha
