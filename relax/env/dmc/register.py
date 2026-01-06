@@ -23,6 +23,7 @@ def register_dm_control_envs():
         ("cheetah", "run_sparse"),
         ("cheetah", "run_quadratic"),
         ("cheetah", "run_reciprocal"),
+        ("cheetah", "run_tanh_squared"),
         ("dog", "run"),
         ("humanoid", "run"),
         ("acrobot", "swingup_sparse"),
