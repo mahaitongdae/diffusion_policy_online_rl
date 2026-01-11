@@ -170,7 +170,7 @@ if __name__ == "__main__":
         agent, params = create_qsm_net(init_network_key, obs_dim, act_dim, hidden_sizes, num_timesteps=20, num_particles=args.num_particles)
         algorithm = QSM(agent, params, lr=args.lr, lr_schedule_end=args.lr_schedule_end)
     elif args.alg == "sac":
-        agent, params = create_sac_net(init_network_key, obs_dim, act_dim, hidden_sizes, gelu)
+        agent, params = create_sac_net(init_network_key, obs_dim, act_dim, hidden_sizes, gelu, initial_alpha=args.init_alpha)
         algorithm = SAC(agent, params, lr=args.lr)
     elif args.alg == "dsact":
         agent, params = create_dsact_net(init_network_key, obs_dim, act_dim, hidden_sizes, gelu)

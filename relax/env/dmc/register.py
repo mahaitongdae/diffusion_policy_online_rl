@@ -1,6 +1,8 @@
+from turtle import onclick
 from relax.env.dmc.wrapper import DMControlToGymWrapper
 from relax.env.dmc.custom_dmc_tasks import cheetah_reward  # register cheetah_reward environment
 from gymnasium.envs.registration import register
+from dm_control import suite
 
 def make_dm_control_env(domain_name, task_name, render_size=(640, 480), **kwargs):
     """Factory function to create a DMControlToGymWrapper environment."""
@@ -8,29 +10,24 @@ def make_dm_control_env(domain_name, task_name, render_size=(640, 480), **kwargs
 
 # Register multiple DeepMind Control Suite environments
 def register_dm_control_envs():
-    dm_control_envs = [
-        ("quadruped", "walk"),
-        ("quadruped", "run"),
-        ("quadruped", "escape"),
-        ("quadruped", "fetch"),
-        ("walker", "stand"),
-        ("walker", "run"),
-        ("walker", "walk"),
-        ("fish", "swim"),
-        ("finger", "spin"),
-        ("reacher", "hard"),
+    custom_dm_control_envs = [
         ("cheetah", "run"),
         ("cheetah", "run_sparse"),
         ("cheetah", "run_quadratic"),
         ("cheetah", "run_reciprocal"),
         ("cheetah", "run_tanh_squared"),
-        ("dog", "run"),
-        ("humanoid", "run"),
-        ("acrobot", "swingup_sparse"),
-        ("cartpole", "balance_sparse"),
-        ("cartpole", "swingup_sparse"),
+        ("cheetah", "run_sparse_test"),
+        ("cheetah", "run_lqr"),
+        ("cheetah", "run_exp_lqr"),
+        ("cheetah", "run_exp"),
+        ("cheetah", "run_eval"),
     ]
-
+    dm_control_envs = list(suite.ALL_TASKS)
+    for env in custom_dm_control_envs:
+        if env not in dm_control_envs:
+            print(f"env {env} not found in dm_control_envs")
+            dm_control_envs.append(env)
+    print(dm_control_envs)
     for domain, task in dm_control_envs:
         env_id = f"dm_control_{domain}_{task}-v0"
         register(
@@ -94,3 +91,16 @@ Registered: dm_control_walker_stand-v0
 Registered: dm_control_walker_walk-v0
 Registered: dm_control_walker_run-v0
 """
+
+if __name__ == "__main__":
+    import gymnasium as gym
+    register_dm_control_envs()
+    env = gym.make('dm_control_cheetah_run_lqr-v0')
+    env.reset()
+    for i in range(1000):
+        action = env.action_space.sample()
+        obs, reward, terminated, truncated, info = env.step(action)
+        # print(obs, reward, terminated, truncated, info)
+        if terminated or truncated:
+            break
+    env.close()

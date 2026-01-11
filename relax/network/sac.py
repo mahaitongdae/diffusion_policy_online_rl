@@ -29,6 +29,7 @@ def create_sac_net(
     act_dim: int,
     hidden_sizes: Sequence[int],
     activation: Activation = jax.nn.relu,
+    initial_alpha: float = 0.1,
 ) -> Tuple[SACNet, SACParams]:
     q = hk.without_apply_rng(hk.transform(lambda obs, act: QNet(hidden_sizes, activation)(obs, act)))
     policy = hk.without_apply_rng(hk.transform(lambda obs: PolicyNet(act_dim, hidden_sizes, activation)(obs)))
@@ -41,7 +42,7 @@ def create_sac_net(
         target_q1_params = q1_params
         target_q2_params = q2_params
         policy_params = policy.init(policy_key, obs)
-        log_alpha = jnp.array(jnp.log(0.1), dtype=jnp.float32)
+        log_alpha = jnp.array(jnp.log(initial_alpha), dtype=jnp.float32)
         return SACParams(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, log_alpha)
 
     sample_obs = jnp.zeros((1, obs_dim))

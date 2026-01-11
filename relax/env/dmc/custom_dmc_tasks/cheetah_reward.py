@@ -23,44 +23,98 @@ from dm_control.suite import base
 from dm_control.suite import common
 from dm_control.utils import containers
 from dm_control.utils import rewards
-
+from dm_control.suite import cheetah as dmc_cheetah
+SUITE = dmc_cheetah.SUITE
 
 # How long the simulation will run, in seconds.
 _DEFAULT_TIME_LIMIT = 10
 
 # Running speed above which reward is 1.
-_RUN_SPEED = 10
+_RUN_SPEED = 8.0
 
-SUITE = containers.TaggedTasks()
+# SUITE = containers.TaggedTasks()
+
+
+import numpy as np
+
+def lqr_reward(speed):
+  return -(speed - _RUN_SPEED) ** 2 / 10
+
+def exp_lqr_reward(speed):
+  return np.exp(lqr_reward(speed))
+
+def linear_reward(speed):
+  return rewards.tolerance(speed,
+                                bounds=(_RUN_SPEED, float('inf')),
+                                margin=_RUN_SPEED / 2,
+                              value_at_margin=0.5,
+                                sigmoid='linear',
+                                )
+def exp_reward(speed):
+  return np.exp(linear_reward(speed))
 
 
 def get_model_and_assets():
   """Returns a tuple containing the model XML string and a dict of assets."""
   return common.read_model('cheetah.xml'), common.ASSETS
   
+# @SUITE.add('benchmarking')
+# def run_quadratic(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+#   """Returns the run task."""
+#   physics = Physics.from_xml_string(*get_model_and_assets())
+#   task = Cheetah(sigmoid='quadratic', random=random)
+#   environment_kwargs = environment_kwargs or {}
+#   return control.Environment(physics, task, time_limit=time_limit,
+#                              **environment_kwargs)
+  
+# @SUITE.add('benchmarking')
+# def run_reciprocal(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+#   """Returns the run task."""
+#   physics = Physics.from_xml_string(*get_model_and_assets())
+#   task = Cheetah(sigmoid='reciprocal', random=random)
+#   environment_kwargs = environment_kwargs or {}
+#   return control.Environment(physics, task, time_limit=time_limit,
+#                              **environment_kwargs)
+  
+# @SUITE.add('benchmarking')
+# def run_sparse(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+#   """Returns the run task."""
+#   physics = Physics.from_xml_string(*get_model_and_assets())
+#   task = Cheetah(sigmoid='sparse', random=random)
+#   environment_kwargs = environment_kwargs or {}
+#   return control.Environment(physics, task, time_limit=time_limit,
+#                              **environment_kwargs)
+  
 @SUITE.add('benchmarking')
-def run_quadratic(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+def run_lqr(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
   """Returns the run task."""
   physics = Physics.from_xml_string(*get_model_and_assets())
-  task = Cheetah(sigmoid='quadratic', random=random)
+  task = Cheetah(sigmoid='lqr', random=random)
   environment_kwargs = environment_kwargs or {}
   return control.Environment(physics, task, time_limit=time_limit,
                              **environment_kwargs)
   
 @SUITE.add('benchmarking')
-def run_reciprocal(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+def run_exp_lqr(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
   """Returns the run task."""
   physics = Physics.from_xml_string(*get_model_and_assets())
-  task = Cheetah(sigmoid='reciprocal', random=random)
+  task = Cheetah(sigmoid='exp_lqr', random=random)
   environment_kwargs = environment_kwargs or {}
   return control.Environment(physics, task, time_limit=time_limit,
                              **environment_kwargs)
-  
 @SUITE.add('benchmarking')
-def run_sparse(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+def run_exp(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
   """Returns the run task."""
   physics = Physics.from_xml_string(*get_model_and_assets())
-  task = Cheetah(sigmoid='sparse', random=random)
+  task = Cheetah(sigmoid='exp', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(physics, task, time_limit=time_limit,
+                             **environment_kwargs)
+@SUITE.add('benchmarking')
+def run_eval(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the run task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = Cheetah(sigmoid='eval', random=random)
   environment_kwargs = environment_kwargs or {}
   return control.Environment(physics, task, time_limit=time_limit,
                              **environment_kwargs)
@@ -112,6 +166,13 @@ class Cheetah(base.Task):
                               margin=_RUN_SPEED,
                               value_at_margin=0,
                               sigmoid=self._sigmoid)
+    elif self._sigmoid in ['eval']:
+      # A linear reward for evaluating the policy.
+      return rewards.tolerance(physics.speed(),
+                              bounds=(15.0, float('inf')),
+                              margin=15.0,
+                              value_at_margin=0.0,
+                              sigmoid='linear')
     elif self._sigmoid in ['reciprocal']:
       return rewards.tolerance(physics.speed(),
                               bounds=(_RUN_SPEED, float('inf')),
@@ -124,5 +185,11 @@ class Cheetah(base.Task):
                               margin=0.0,
                               value_at_margin=0,
                               sigmoid='linear')
+    elif self._sigmoid in ['lqr']:
+      return lqr_reward(physics.speed())
+    elif self._sigmoid in ['exp_lqr']:
+      return exp_lqr_reward(physics.speed())
+    elif self._sigmoid in ['exp']:
+      return exp_reward(physics.speed())
     else:
       raise ValueError(f"Invalid sigmoid: {self._sigmoid}")

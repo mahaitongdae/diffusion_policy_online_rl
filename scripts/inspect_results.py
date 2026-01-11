@@ -53,13 +53,16 @@ def load_best_results(pattern, env_name, show_df=False,
     for dir in matching_dir:
         csv_path = dir / 'log.csv'
         df = pd.read_csv(str(csv_path))
-        if max_steps is not None:
-            df = df[df['step'] < max_steps]
-        sliced_df = df.loc[df['avg_ret'].idxmax()]
-        sliced_df.loc['seed'] = str(dir).split('_s')[1].split('_')[0]
-        # if 'lr_end' in dir:
-        #     sliced_df.loc['lr_end'] = dir.split('lr_end_')[1]
-        dfs.append(sliced_df)
+        if len(df) > 0:
+            if max_steps is not None:
+                df = df[df['step'] < max_steps]
+            sliced_df = df.loc[df['avg_ret'].idxmax()]
+            sliced_df.loc['seed'] = str(dir).split('_s')[1].split('_')[0]
+            # if 'lr_end' in dir:
+            #     sliced_df.loc['lr_end'] = dir.split('lr_end_')[1]
+            dfs.append(sliced_df)
+        else:
+            continue
     if len(dfs) == 0:
         print(f"No results found for {pattern}")
         return None
