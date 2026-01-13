@@ -100,7 +100,7 @@ class OffPolicyTrainer:
                 sys.executable,
                 "-m", "relax.trainer.evaluator",
                 str(self.log_path),
-                "--env", self.env.spec.id,
+                "--env", self.evaluate_env.spec.id,
                 "--num_episodes", str(self.evaluate_n_episode),
                 "--seed", str(0),
             ],

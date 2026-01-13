@@ -65,9 +65,11 @@ if __name__ == "__main__":
     parser.add_argument("--kl_constraint", type=float, default=1.0)
     parser.add_argument("--init_alpha", type=float, default=1e-4)
     parser.add_argument("--reweight_type", type=str, default='logsumexp')  # 'exp', 'none'
-    parser.add_argument("--alpha_transformation", type=str, default="None") # 'None', 'softplus', 'exp'
-    parser.add_argument("--wandb_group", type=str, default="None")
     parser.add_argument("--use_flow", default=False, action='store_true')
+    parser.add_argument("--alpha_transformation", type=str, default="identity") # 'None', 'softplus', 'exp'
+    parser.add_argument("--wandb_group", type=str, default="debug")
+    parser.add_argument("--clip_lower_bound", type=float, default=-0.1)
+    parser.add_argument("--eval_env", type=str, default='None')
     args = parser.parse_args()
 
     if args.debug:
@@ -91,7 +93,10 @@ if __name__ == "__main__":
         env, obs_dim, act_dim = create_vector_env(args.env, args.num_vec_envs, env_seed, env_action_seed, mode="futex")
     else:
         env, obs_dim, act_dim = create_env(args.env, env_seed, env_action_seed)
-    eval_env = None
+    if args.eval_env != 'None':
+        eval_env, _, _ = create_env(args.eval_env, eval_env_seed, env_action_seed)
+    else:
+        eval_env = env
 
     hidden_sizes = [args.hidden_dim] * args.hidden_num
     diffusion_hidden_sizes = [args.diffusion_hidden_dim] * args.hidden_num
@@ -152,7 +157,8 @@ if __name__ == "__main__":
                            update_additive_noise_scale=args.update_additive_noise_scale,
                            alpha_transformation=args.alpha_transformation,
                            reweight_type=args.reweight_type,
-                           delay_log_noise_scale_update=args.delay_log_noise_scale_update)
+                           delay_log_noise_scale_update=args.delay_log_noise_scale_update,
+                           clipped_lower_bound=args.clip_lower_bound)
     elif args.alg == 'idem':
         def mish(x: jax.Array):
             return x * jnp.tanh(jax.nn.softplus(x))
@@ -166,7 +172,7 @@ if __name__ == "__main__":
         agent, params = create_qsm_net(init_network_key, obs_dim, act_dim, hidden_sizes, num_timesteps=20, num_particles=args.num_particles)
         algorithm = QSM(agent, params, lr=args.lr, lr_schedule_end=args.lr_schedule_end)
     elif args.alg == "sac":
-        agent, params = create_sac_net(init_network_key, obs_dim, act_dim, hidden_sizes, gelu)
+        agent, params = create_sac_net(init_network_key, obs_dim, act_dim, hidden_sizes, gelu, initial_alpha=args.init_alpha)
         algorithm = SAC(agent, params, lr=args.lr)
     elif args.alg == "dsact":
         agent, params = create_dsact_net(init_network_key, obs_dim, act_dim, hidden_sizes, gelu)
