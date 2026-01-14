@@ -101,7 +101,7 @@ Registered: dm_control_walker_run-v0
 if __name__ == "__main__":
     import gymnasium as gym
     register_dm_control_envs()
-    env = gym.make('dm_control_cheetah_run_lqr-v0')
+    env = gym.make('dm_control_walker_run_lqr-v0')
     env.reset()
     for i in range(1000):
         action = env.action_space.sample()

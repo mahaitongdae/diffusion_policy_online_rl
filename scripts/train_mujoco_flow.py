@@ -1,5 +1,6 @@
 import argparse
 import os.path
+import sys
 from pathlib import Path
 import time
 from functools import partial
@@ -187,6 +188,19 @@ if __name__ == "__main__":
         PROJECT_ROOT = Path('/n/netscratch/nali_lab_seas/Lab/haitongma/sdac_logs')
     
     exp_dir = PROJECT_ROOT / "logs" / args.env / (args.alg + '_' + time.strftime("%Y-%m-%d_%H-%M-%S") + f'_s{args.seed}_{args.suffix}')
+    exp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save the command to a text file
+    with open(os.path.join(exp_dir, 'command.txt'), 'w') as f:
+        f.write(' '.join(sys.argv))
+
+    # Save the arguments to a YAML file
+    args_dict = vars(args)
+    with open(os.path.join(exp_dir, 'config.yaml'), 'w') as yaml_file:
+        yaml.dump(args_dict, yaml_file)
+
+    log_git_details(log_file=os.path.join(exp_dir, 'dacer.diff'))
+
     trainer = OffPolicyTrainer(
         env=env,
         algorithm=algorithm,
@@ -202,10 +216,5 @@ if __name__ == "__main__":
     )
 
     trainer.setup(Experience.create_example(obs_dim, act_dim, trainer.batch_size))
-    log_git_details(log_file=os.path.join(exp_dir, 'dacer.diff'))
     
-    # Save the arguments to a YAML file
-    args_dict = vars(args)
-    with open(os.path.join(exp_dir, 'config.yaml'), 'w') as yaml_file:
-        yaml.dump(args_dict, yaml_file)
     trainer.run(train_key)

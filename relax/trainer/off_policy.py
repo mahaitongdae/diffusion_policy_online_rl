@@ -63,6 +63,8 @@ class OffPolicyTrainer:
         self.hparams = hparams
         self.warmup_with = warmup_with
         self.save_value = save_value
+        self.eval_log_file = None
+        self.eval_err_log_file = None
         # TODO: make EpisodeLog and Experience configurable
         # TODO: re-add done_info_keys support
         # TODO: re-add evaluation support
@@ -95,6 +97,8 @@ class OffPolicyTrainer:
         self.algorithm.save_policy_structure(self.log_path, dummy_data.obs[0])
         if self.save_value:
             self.algorithm.save_q_structure(self.log_path, dummy_obs=dummy_data.obs[0], dummy_action=dummy_data.action[0])
+        self.eval_log_file = open(self.log_path / "eval_log.out", "a")
+        self.eval_err_log_file = open(self.log_path / "eval_log.err", "a")
         self.evaluator = subprocess.Popen(
             [
                 sys.executable,
@@ -105,6 +109,8 @@ class OffPolicyTrainer:
                 "--seed", str(0),
             ],
             stdin=subprocess.PIPE,
+            stdout=self.eval_log_file,
+            stderr=self.eval_err_log_file,
             bufsize=0,
         )
 
@@ -234,6 +240,10 @@ class OffPolicyTrainer:
         self.progress.close()
         self.evaluator.stdin.close()
         self.evaluator.wait()
+        if self.eval_log_file is not None:
+            self.eval_log_file.close()
+        if self.eval_err_log_file is not None:
+            self.eval_err_log_file.close()
 
 def create_iter_key_fn(key: jax.Array, sample_per_iteration: int, update_per_iteration: int) -> Callable[[int], Tuple[jax.Array, jax.Array]]:
     def iter_key_fn(step: int):
