@@ -21,6 +21,12 @@ def register_dm_control_envs():
         ("cheetah", "run_exp_lqr"),
         ("cheetah", "run_exp"),
         ("cheetah", "run_eval"),
+        ("walker", "walk_lqr"),
+        ("walker", "walk_exp_lqr"),
+        ("walker", "walk_exp"),
+        ("walker", "run_lqr"),
+        ("walker", "run_exp_lqr"),
+        ("walker", "run_exp"),
     ]
     dm_control_envs = list(suite.ALL_TASKS)
     for env in custom_dm_control_envs:

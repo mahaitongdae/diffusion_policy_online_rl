@@ -7,6 +7,10 @@ from gymnasium import spaces
 from dm_control import suite
 from dm_env import StepType
 
+from relax.env.dmc.custom_dmc_tasks import cheetah_reward  # register cheetah_reward environment
+from relax.env.dmc.custom_dmc_tasks import walker_reward   # register walker_reward environment
+
+
 class DMControlToGymWrapper(gym.Env):
     """Wrapper to convert DeepMind Control Suite env to a Gymnasium-compatible environment."""
 
