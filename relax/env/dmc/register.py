@@ -56,7 +56,7 @@ def register_dm_control_envs():
     dm_control_envs = list(suite.ALL_TASKS)
     for env in custom_dm_control_envs:
         if env not in dm_control_envs:
-            print(f"env {env} not found in dm_control_envs")
+            # print(f"env {env} not found in dm_control_envs")
             dm_control_envs.append(env)
     # print(dm_control_envs)
     for domain, task in dm_control_envs + custom_dm_control_envs_v1:

@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import subprocess
 import sys
 from typing import Callable, Optional, Tuple
@@ -99,6 +100,7 @@ class OffPolicyTrainer:
             self.algorithm.save_q_structure(self.log_path, dummy_obs=dummy_data.obs[0], dummy_action=dummy_data.action[0])
         self.eval_log_file = open(self.log_path / "eval_log.out", "a")
         self.eval_err_log_file = open(self.log_path / "eval_log.err", "a")
+        eval_env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
         self.evaluator = subprocess.Popen(
             [
                 sys.executable,
@@ -112,6 +114,7 @@ class OffPolicyTrainer:
             stdout=self.eval_log_file,
             stderr=self.eval_err_log_file,
             bufsize=0,
+            env=eval_env,
         )
 
     def warmup(self, key: jax.Array, obs: np.ndarray):
