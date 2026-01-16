@@ -41,7 +41,7 @@ def plot_mean(patterns_dict: Dict, env_name, fig_name = None,
 
 
 def load_best_results(pattern, env_name, show_df=False,
-              max_steps=None):
+              max_steps=None, verbose=False):
     package_path = Path(relax.__file__)
     logdir = package_path.parent.parent / 'logs' / env_name
     # pattern = r".*diffv2.*noise_scale_0\.0\d$"
@@ -64,16 +64,20 @@ def load_best_results(pattern, env_name, show_df=False,
         else:
             continue
     if len(dfs) == 0:
-        print(f"No results found for {pattern}")
+        if verbose:
+            print(f"No results found for {pattern}")
         return None
     total_df = pd.concat(dfs, ignore_index=True, axis=1).T
     if show_df:
         print(total_df.to_markdown())
-    if "Pusher" in env_name or "Reacher" in env_name:
+    if verbose and ("Pusher" in env_name or "Reacher" in env_name):
         print(f"${total_df['avg_ret'].mean():.2f} \pm {total_df['avg_ret'].std():.2f}$")
     else:   
-        print(f"${total_df['avg_ret'].mean():.0f} \pm {total_df['avg_ret'].std():.0f}$")
+        if verbose:
+            print(f"${total_df['avg_ret'].mean():.0f} \pm {total_df['avg_ret'].std():.0f}$")
     return total_df
+
+
 
 if __name__ == "__main__":
     # pattern = r".*diffv2.*01-07.*diffv2_ema$"

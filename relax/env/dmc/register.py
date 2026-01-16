@@ -1,11 +1,16 @@
 from turtle import onclick
 from relax.env.dmc.wrapper import DMControlToGymWrapper
 from relax.env.dmc.custom_dmc_tasks import cheetah_reward  # register cheetah_reward environment
+from relax.env.dmc.custom_dmc_tasks import cheetah_reward_v1  # register cheetah_reward_v1 environment
+from relax.env.dmc.custom_dmc_tasks import walker_reward_v1  # register walker_reward_v1 environment
 from gymnasium.envs.registration import register
+import gymnasium as gym
 from dm_control import suite
 
-def make_dm_control_env(domain_name, task_name, render_size=(640, 480), **kwargs):
+def make_dm_control_env(domain_name, task_name, version=0, render_size=(640, 480), **kwargs):
     """Factory function to create a DMControlToGymWrapper environment."""
+    if version == 1:
+        task_name = task_name + '_v1'
     return DMControlToGymWrapper(domain_name, task_name, render_size=render_size, **kwargs)
 
 # Register multiple DeepMind Control Suite environments
@@ -28,20 +33,49 @@ def register_dm_control_envs():
         ("walker", "run_exp_lqr"),
         ("walker", "run_exp"),
     ]
+    custom_dm_control_envs_v1 = [
+        ("cheetah", "run_lqr_v1"),
+        ("cheetah", "run_exp_lqr_v1"),
+        ("cheetah", "run_exp_v1"),
+        ("cheetah", "run_eval_v1"),
+        ("cheetah", "run_square_v1"),
+        ("cheetah", "run_linear_v1"),
+        ("walker", "walk_lqr_v1"),
+        ("walker", "walk_exp_lqr_v1"),
+        ("walker", "walk_exp_v1"),
+        ("walker", "walk_eval_v1"),
+        ("walker", "walk_square_v1"),
+        ("walker", "walk_linear_v1"),
+        ("walker", "run_lqr_v1"),
+        ("walker", "run_exp_lqr_v1"),
+        ("walker", "run_exp_v1"),
+        ("walker", "run_eval_v1"),
+        ("walker", "run_square_v1"),
+        ("walker", "run_linear_v1"),
+    ]
     dm_control_envs = list(suite.ALL_TASKS)
     for env in custom_dm_control_envs:
         if env not in dm_control_envs:
             print(f"env {env} not found in dm_control_envs")
             dm_control_envs.append(env)
-    print(dm_control_envs)
-    for domain, task in dm_control_envs:
-        env_id = f"dm_control_{domain}_{task}-v0"
-        register(
-            id=env_id,
-            entry_point=make_dm_control_env,
-            kwargs={"domain_name": domain, "task_name": task},
-        )
-        print(domain, task)
+    # print(dm_control_envs)
+    for domain, task in dm_control_envs + custom_dm_control_envs_v1:
+        if not task.endswith('_v1'):
+            env_id = f"dm_control_{domain}_{task}-v0"
+            version = 0
+        else:
+            task = task.replace('_v1', '')
+            version = 1
+            env_id = f"dm_control_{domain}_{task}-v1"
+        if env_id not in gym.envs.registry.keys():
+            register(
+                id=env_id,
+                entry_point=make_dm_control_env,
+                kwargs={"domain_name": domain, "task_name": task, "version": version},
+            )
+        else:
+            print(f"env {env_id} already registered, skipping")
+        # print(domain, task)
 
 """
 all avaliable envs:
@@ -102,11 +136,28 @@ if __name__ == "__main__":
     import gymnasium as gym
     register_dm_control_envs()
     env = gym.make('dm_control_walker_run_lqr-v0')
-    env.reset()
-    for i in range(1000):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        # print(obs, reward, terminated, truncated, info)
-        if terminated or truncated:
-            break
-    env.close()
+    env_v1 = gym.make('dm_control_cheetah_run_lqr-v1')
+    gym.make('dm_control_cheetah_run_linear-v1')
+    gym.make('dm_control_cheetah_run_square-v1')
+    gym.make('dm_control_cheetah_run_exp-v1')
+    gym.make('dm_control_cheetah_run_exp_lqr-v1')
+    gym.make('dm_control_walker_walk_lqr-v1')
+    gym.make('dm_control_walker_walk_exp_lqr-v1')
+    gym.make('dm_control_walker_walk_exp-v1')
+    gym.make('dm_control_walker_walk_eval-v1')
+    gym.make('dm_control_walker_walk_square-v1')
+    gym.make('dm_control_walker_walk_linear-v1')
+    gym.make('dm_control_walker_run_lqr-v1')
+    gym.make('dm_control_walker_run_exp_lqr-v1')
+    gym.make('dm_control_walker_run_exp-v1')
+    gym.make('dm_control_walker_run_eval-v1')
+    gym.make('dm_control_walker_run_square-v1')
+    gym.make('dm_control_walker_run_linear-v1')
+    # env.reset()
+    # for i in range(1000):
+    #     action = env.action_space.sample()
+    #     obs, reward, terminated, truncated, info = env.step(action)
+    #     # print(obs, reward, terminated, truncated, info)
+    #     if terminated or truncated:
+    #         break
+    # env.close()
