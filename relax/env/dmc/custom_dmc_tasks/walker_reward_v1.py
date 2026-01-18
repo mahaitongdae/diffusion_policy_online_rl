@@ -176,6 +176,86 @@ def run_eval_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=
       physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
       **environment_kwargs)
 
+@SUITE.add('benchmarking')
+def run_abs_square_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the Run task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = PlanarWalker(move_speed=_RUN_SPEED, reward_type='abs_square', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(
+      physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
+      **environment_kwargs)
+
+@SUITE.add('benchmarking')
+def run_abs_sqrt_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the Run task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = PlanarWalker(move_speed=_RUN_SPEED, reward_type='abs_sqrt', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(
+      physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
+      **environment_kwargs)
+
+@SUITE.add('benchmarking')
+def run_abs_exp_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the Run task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = PlanarWalker(move_speed=_RUN_SPEED, reward_type='abs_exp', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(
+      physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
+      **environment_kwargs)
+
+@SUITE.add('benchmarking')
+def run_abs_linear_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the Run task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = PlanarWalker(move_speed=_RUN_SPEED, reward_type='abs_linear', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(
+      physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
+      **environment_kwargs)
+
+
+@SUITE.add('benchmarking')
+def walk_abs_square_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the Walk task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = PlanarWalker(move_speed=_WALK_SPEED, reward_type='abs_square', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(
+      physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
+      **environment_kwargs)
+
+@SUITE.add('benchmarking')
+def walk_abs_sqrt_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the Walk task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = PlanarWalker(move_speed=_WALK_SPEED, reward_type='abs_sqrt', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(
+      physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
+      **environment_kwargs)
+
+@SUITE.add('benchmarking')
+def walk_abs_exp_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the Walk task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = PlanarWalker(move_speed=_WALK_SPEED, reward_type='abs_exp', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(
+      physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
+      **environment_kwargs)
+
+@SUITE.add('benchmarking')
+def walk_abs_linear_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the Walk task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = PlanarWalker(move_speed=_WALK_SPEED, reward_type='abs_linear', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(
+      physics, task, time_limit=time_limit, control_timestep=_CONTROL_TIMESTEP,
+      **environment_kwargs)
 
 class Physics(mujoco.Physics):
   """Physics simulation with additional features for the Walker domain."""
@@ -247,6 +327,7 @@ class PlanarWalker(base.Task):
     if self._move_speed == 0:
       return stand_reward
     else:
+      abs_reward = helper.AbsReward(0.5 * self._move_speed)
       if self._reward_type == 'linear':
         move_reward = helper.linear_reward(physics.horizontal_velocity(), self._move_speed)
       elif self._reward_type == 'exp':
@@ -259,6 +340,18 @@ class PlanarWalker(base.Task):
         move_reward = helper.square_reward(physics.horizontal_velocity(), self._move_speed)
       elif self._reward_type == 'eval':
         move_reward = physics.horizontal_velocity() / 10.0
+      elif self._reward_type == 'abs_square':
+        speed = np.clip(physics.horizontal_velocity(), -np.inf, self._move_speed)
+        move_reward = abs_reward.abs_square_reward(speed)
+      elif self._reward_type == 'abs_sqrt':
+        speed = np.clip(physics.horizontal_velocity(), -np.inf, self._move_speed)
+        move_reward = abs_reward.abs_sqrt_reward(speed)
+      elif self._reward_type == 'abs_exp':
+        speed = np.clip(physics.horizontal_velocity(), -np.inf, self._move_speed)
+        move_reward = abs_reward.abs_exp_reward(speed)
+      elif self._reward_type == 'abs_linear':
+        speed = np.clip(physics.horizontal_velocity(), -np.inf, self._move_speed)
+        move_reward = abs_reward.abs_linear_reward(speed)
       else:
         raise ValueError(f"Invalid reward type: {self._reward_type}")
       return stand_reward * (5*move_reward + 1) / 6

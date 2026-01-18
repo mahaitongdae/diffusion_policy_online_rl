@@ -138,6 +138,32 @@ def run_linear_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwarg
   return control.Environment(physics, task, time_limit=time_limit,
                              **environment_kwargs)
 
+@SUITE.add('benchmarking')
+def run_abs_square_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the run task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = Cheetah(reward_type='abs_square', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(physics, task, time_limit=time_limit,
+                             **environment_kwargs)
+
+@SUITE.add('benchmarking')
+def run_abs_sqrt_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the run task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = Cheetah(reward_type='abs_sqrt', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(physics, task, time_limit=time_limit,
+                             **environment_kwargs)
+
+@SUITE.add('benchmarking')
+def run_abs_exp_v1(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+  """Returns the run task."""
+  physics = Physics.from_xml_string(*get_model_and_assets())
+  task = Cheetah(reward_type='abs_exp', random=random)
+  environment_kwargs = environment_kwargs or {}
+  return control.Environment(physics, task, time_limit=time_limit,
+                             **environment_kwargs)
 
 class Physics(mujoco.Physics):
   """Physics simulation with additional features for the Cheetah domain."""
@@ -180,6 +206,7 @@ class Cheetah(base.Task):
   def get_reward(self, physics):
     """Returns a reward to the agent."""
 
+    abs_reward = helper.AbsReward(5.0)
     if self._reward_type in ['lqr']:
       return helper.lqr_reward(physics.speed(), _RUN_SPEED)
     elif self._reward_type in ['linear']:
@@ -190,6 +217,12 @@ class Cheetah(base.Task):
       return helper.exp_reward(physics.speed(), _RUN_SPEED)
     elif self._reward_type in ['square']:
       return helper.square_reward(physics.speed(), _RUN_SPEED)
+    elif self._reward_type in ['abs_square']:
+      return abs_reward.abs_square_reward(physics.speed())
+    elif self._reward_type in ['abs_sqrt']:
+      return abs_reward.abs_sqrt_reward(physics.speed())
+    elif self._reward_type in ['abs_exp']:
+      return abs_reward.abs_exp_reward(physics.speed())
     elif self._reward_type in ['eval']:
       return physics.speed() / 10.0
     else:

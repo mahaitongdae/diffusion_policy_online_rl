@@ -40,6 +40,9 @@ def register_dm_control_envs():
         ("cheetah", "run_eval_v1"),
         ("cheetah", "run_square_v1"),
         ("cheetah", "run_linear_v1"),
+        ("cheetah", "run_abs_square_v1"),
+        ("cheetah", "run_abs_sqrt_v1"),
+        ("cheetah", "run_abs_exp_v1"),
         ("walker", "walk_lqr_v1"),
         ("walker", "walk_exp_lqr_v1"),
         ("walker", "walk_exp_v1"),
@@ -52,6 +55,14 @@ def register_dm_control_envs():
         ("walker", "run_eval_v1"),
         ("walker", "run_square_v1"),
         ("walker", "run_linear_v1"),
+        ("walker", "run_abs_square_v1"),
+        ("walker", "run_abs_sqrt_v1"),
+        ("walker", "run_abs_exp_v1"),
+        ("walker", "run_abs_linear_v1"),
+        ("walker", "walk_abs_square_v1"),
+        ("walker", "walk_abs_sqrt_v1"),
+        ("walker", "walk_abs_exp_v1"),
+        ("walker", "walk_abs_linear_v1"),
     ]
     dm_control_envs = list(suite.ALL_TASKS)
     for env in custom_dm_control_envs:
@@ -153,6 +164,16 @@ if __name__ == "__main__":
     gym.make('dm_control_walker_run_eval-v1')
     gym.make('dm_control_walker_run_square-v1')
     gym.make('dm_control_walker_run_linear-v1')
+    gym.make('dm_control_cheetah_run_abs_square-v1')
+    gym.make('dm_control_cheetah_run_abs_sqrt-v1')
+    gym.make('dm_control_cheetah_run_abs_exp-v1')
+    gym.make('dm_control_walker_run_abs_square-v1')
+    gym.make('dm_control_walker_run_abs_sqrt-v1')
+    gym.make('dm_control_walker_run_abs_exp-v1')
+    gym.make('dm_control_walker_walk_abs_square-v1')
+    gym.make('dm_control_walker_walk_abs_sqrt-v1')
+    gym.make('dm_control_walker_walk_abs_exp-v1')
+    gym.make('dm_control_walker_walk_abs_linear-v1')
     # env.reset()
     # for i in range(1000):
     #     action = env.action_space.sample()
