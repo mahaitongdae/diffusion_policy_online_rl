@@ -32,6 +32,125 @@ class Diffv2TrainState(NamedTuple):
 def softplus_inv(x: float):
     return jnp.log(jnp.exp(x) - 1)
 
+def solve_v_batch(x, l):
+    """
+    Solves for v such that mean(ReLU(x - v) / l) = 1 for each batch.
+    
+    Args:
+        x: Input data of shape (batch_size, num_samples)
+        l: Scale parameter of shape (batch_size, 1) or scalar.
+    
+    Returns:
+        v: Solution of shape (batch_size, 1)
+    """
+    # 1. Setup constants
+    N = x.shape[-1]
+    target = N * l  # We want sum(ReLU(x-v)) = N * l
+    
+    # 2. Sort x in descending order: x_(1) >= x_(2) ...
+    # shape: (batch_size, N)
+    x_sorted = jnp.sort(x, axis=-1)[:, ::-1]
+    
+    # 3. Compute Cumulative Sums
+    # shape: (batch_size, N)
+    cumsum_x = jnp.cumsum(x_sorted, axis=-1)
+    
+    # 4. Create an index array k = [1, 2, ..., N]
+    # shape: (1, N)
+    k_indices = jnp.arange(1, N + 1).reshape(1, -1)
+    
+    # 5. Determine the number of active elements (k*)
+    # The condition for k active elements is: sum(x_top_k - x_k) < target
+    # If this holds, it means we must lower v below x_k to get enough mass.
+    
+    # term_k represents the "mass" available strictly above the level x_(k)
+    # term_k = sum(x_(1)..x_(k)) - k * x_(k)
+    term_k = cumsum_x - k_indices * x_sorted
+    
+    # Mask is True where valid. Since term_k is monotonic, 
+    # we can sum the mask to find the transition point.
+    # k_star is the number of active elements.
+    mask = term_k < target
+    k_star = jnp.sum(mask, axis=-1, keepdims=True) # shape (batch_size, 1)
+    
+    # 6. Gather the relevant sum and compute v
+    # We need the sum of the top k_star elements. 
+    # Since indices are 0-based, we want index k_star - 1.
+    sum_active = jnp.take_along_axis(cumsum_x, k_star - 1, axis=-1)
+    
+    # v = (sum_active - target) / k_star
+    v = (sum_active - target) / k_star
+    
+    return v
+
+def solve_v_squared_batch(x, l):
+    """
+    Solves for v such that mean((ReLU(x - v) / l)^2) = 1.
+    
+    Args:
+        x: Input data of shape (batch_size, num_samples)
+        l: Scale parameter of shape (batch_size, 1) or scalar.
+    
+    Returns:
+        v: Solution of shape (batch_size, 1)
+    """
+    N = x.shape[-1]
+    # Target sum of squares: sum(ReLU(...)^2) = N * l^2
+    C = N * (l ** 2)
+    
+    # 1. Sort descending
+    x_sorted = jnp.sort(x, axis=-1)[:, ::-1]
+    
+    # 2. Cumulative sums for moments
+    # S1: sum(x)
+    # S2: sum(x^2)
+    cumsum_x = jnp.cumsum(x_sorted, axis=-1)
+    cumsum_x2 = jnp.cumsum(x_sorted ** 2, axis=-1)
+    
+    # 3. Indices k = 1..N
+    k_indices = jnp.arange(1, N + 1).reshape(1, -1)
+    
+    # 4. Calculate "Energy at Boundary" (v = x_k)
+    # E_k = sum_{1..k} (x_i - x_k)^2
+    # Expansion: sum(x^2) - 2*x_k*sum(x) + k*x_k^2
+    energy_at_boundary = (
+        cumsum_x2 
+        - 2 * x_sorted * cumsum_x 
+        + k_indices * (x_sorted ** 2)
+    )
+    
+    # 5. Determine active set size k*
+    # We look for the largest k where the energy at boundary x_k is LESS than target C.
+    # If energy_at_boundary < C, it means we must lower v further (below x_k)
+    # to accumulate more squared error.
+    mask = energy_at_boundary < C
+    k_star = jnp.sum(mask, axis=-1, keepdims=True)
+    
+    # Handle edge case: if C is very small, k_star might be 0? 
+    # Logic: sum(mask) gives us how many boundaries we passed.
+    # We clip to at least 1 to avoid division by zero (though mathematically k >= 1 usually).
+    k_star = jnp.maximum(k_star, 1)
+    
+    # 6. Gather sufficient statistics for the valid k*
+    # Note: k_star is 1-based count, so index is k_star - 1
+    S1_active = jnp.take_along_axis(cumsum_x, k_star - 1, axis=-1)
+    S2_active = jnp.take_along_axis(cumsum_x2, k_star - 1, axis=-1)
+    
+    # 7. Solve Quadratic: k*v^2 - 2*S1*v + (S2 - C) = 0
+    # Discriminant Delta = (2*S1)^2 - 4*k*(S2 - C)
+    # Simplified root formula: v = (S1 - sqrt(S1^2 - k*(S2 - C))) / k
+    # We use the negative root because v must be less than the mean of the active set
+    # to generate sufficient variance on the "left" side of the distribution.
+    
+    term_inside_sqrt = S1_active**2 - k_star * (S2_active - C)
+    
+    # Numerical safety: term should be positive, but clip 0 for float errors
+    term_inside_sqrt = jnp.maximum(term_inside_sqrt, 0.0)
+    
+    v = (S1_active - jnp.sqrt(term_inside_sqrt)) / k_star
+    
+    return v
+
 class DPMDV2(Algorithm):
 
     def __init__(
@@ -182,12 +301,36 @@ class DPMDV2(Algorithm):
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'strictly_normalized_relu_linear':
+                    assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
+                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_linear is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    normalized_diff = solve_v_batch(q_batch_action.T, alpha).T  # pass in [B, N] and get [B, 1]
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - normalized_diff) / alpha
+                    q_weights = jax.nn.relu(q_normalized)
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_relu_square':
                     assert not self.learnable_alpha, "normalized_relu_square is not compatible with learnable_alpha"
                     assert self.alpha_transformation == 'identity', "normalized_relu_square is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action + alpha - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_weights = jax.nn.relu(q_normalized) ** 2
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'strictly_normalized_relu_square':
+                    assert not self.learnable_alpha, "strictly_normalized_relu_square is not compatible with learnable_alpha"
+                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_square is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    normalized_diff = solve_v_squared_batch(q_batch_action.T, alpha).T  # pass in [B, N] and get [B, 1]
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - normalized_diff) / alpha
                     q_weights = jax.nn.relu(q_normalized) ** 2
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
@@ -275,6 +418,13 @@ class DPMDV2(Algorithm):
                     q_mean = jnp.mean(q_batch_action)
                     q_std = jnp.std(q_batch_action, axis=0).mean()
                     entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
+                elif self.reweight_type == 'strictly_normalized_logsumexp':
+                    scaled_q = q_batch_action / alpha
+                    Z = jax.nn.logsumexp(scaled_q, axis=0, keepdims=True)
+                    q_weights = jnp.exp(scaled_q - Z) * self.agent.num_particles  # [N, B]
+                    q_mean = jnp.mean(q_batch_action)
+                    q_std = jnp.std(q_batch_action, axis=0).mean()
+                    entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'exp':
                     q_best_ind = jnp.argmax(q_batch_action, axis=0, keepdims=True)
                     act_best_of_n = jnp.take_along_axis(batch_action, q_best_ind[..., None], axis=0).squeeze(axis=0)
@@ -303,7 +453,7 @@ class DPMDV2(Algorithm):
             (total_loss, (q_weights, scaled_q, q_mean, q_std, entropy)), policy_grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(policy_params)
 
             # update alpha
-            if self.use_analytical_alpha_grad:
+            if self.use_analytical_alpha_grad and 'logsumexp' in self.reweight_type:
                 alpha_grad = (self.kl_constraint + entropy - jnp.log(self.agent.num_particles)).mean()
                 alpha_loss = 0.0
             else:
