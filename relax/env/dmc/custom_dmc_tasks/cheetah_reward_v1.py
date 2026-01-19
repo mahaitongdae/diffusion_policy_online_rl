@@ -224,6 +224,6 @@ class Cheetah(base.Task):
     elif self._reward_type in ['abs_exp']:
       return abs_reward.abs_exp_reward(physics.speed())
     elif self._reward_type in ['eval']:
-      return physics.speed() / 10.0
+      return physics.speed() / _RUN_SPEED
     else:
       raise ValueError(f"Invalid reward type: {self._reward_type}")

@@ -339,7 +339,7 @@ class PlanarWalker(base.Task):
       elif self._reward_type == 'square':
         move_reward = helper.square_reward(physics.horizontal_velocity(), self._move_speed)
       elif self._reward_type == 'eval':
-        move_reward = physics.horizontal_velocity() / 10.0
+        move_reward = physics.horizontal_velocity() / self._move_speed
       elif self._reward_type == 'abs_square':
         speed = np.clip(physics.horizontal_velocity(), -np.inf, self._move_speed)
         move_reward = abs_reward.abs_square_reward(speed)
