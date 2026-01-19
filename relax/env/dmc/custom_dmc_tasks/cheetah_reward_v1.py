@@ -220,7 +220,7 @@ class Cheetah(base.Task):
     elif self._reward_type in ['abs_square']:
       return abs_reward.abs_square_reward(physics.speed())
     elif self._reward_type in ['abs_sqrt']:
-      return abs_reward.abs_sqrt_reward(physics.speed())
+      return abs_reward.abs_sqrt_reward(np.clip(physics.speed(), 1e-6, np.inf))
     elif self._reward_type in ['abs_exp']:
       return abs_reward.abs_exp_reward(physics.speed())
     elif self._reward_type in ['eval']:

@@ -344,7 +344,7 @@ class PlanarWalker(base.Task):
         speed = np.clip(physics.horizontal_velocity(), -np.inf, self._move_speed)
         move_reward = abs_reward.abs_square_reward(speed)
       elif self._reward_type == 'abs_sqrt':
-        speed = np.clip(physics.horizontal_velocity(), -np.inf, self._move_speed)
+        speed = np.clip(physics.horizontal_velocity(), 1e-6, self._move_speed)
         move_reward = abs_reward.abs_sqrt_reward(speed)
       elif self._reward_type == 'abs_exp':
         speed = np.clip(physics.horizontal_velocity(), -np.inf, self._move_speed)
