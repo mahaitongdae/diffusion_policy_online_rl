@@ -357,3 +357,25 @@ class PlanarWalker(base.Task):
       return stand_reward * (5*move_reward + 1) / 6
     
 
+if __name__ == "__main__":
+  import matplotlib.pyplot as plt
+  fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+  abs_reward = helper.AbsReward(0.5 * 10.0)
+  speed = np.linspace(0, 10, 100)
+  ax.plot(speed, abs_reward.abs_sqrt_reward(speed), label='abs_sqrt')
+  ax.plot(speed, abs_reward.abs_linear_reward(speed), label='abs_linear')
+  ax.plot(speed, abs_reward.abs_square_reward(speed), label='abs_square')
+  ax.plot(speed, abs_reward.abs_exp_reward(speed), label='abs_exp')
+  plt.legend()
+  plt.savefig('abs_reward_walker_10.png')
+
+  fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+  abs_reward = helper.AbsReward(0.5 * 1.0)
+  speed = np.linspace(0, 2, 100)
+  clipped_speed = np.clip(speed, -np.inf, 1.0)
+  ax.plot(speed, abs_reward.abs_sqrt_reward(clipped_speed), label='abs_sqrt')
+  ax.plot(speed, abs_reward.abs_linear_reward(clipped_speed), label='abs_linear')
+  ax.plot(speed, abs_reward.abs_square_reward(clipped_speed), label='abs_square')
+  ax.plot(speed, abs_reward.abs_exp_reward(clipped_speed), label='abs_exp')
+  plt.legend()
+  plt.savefig('abs_reward_walker_1.png')

@@ -32,122 +32,114 @@ class Diffv2TrainState(NamedTuple):
 def softplus_inv(x: float):
     return jnp.log(jnp.exp(x) - 1)
 
-def solve_v_batch(x, l):
+def solve_v_batch(x, l, lower_bound=0.0):
     """
-    Solves for v such that mean(ReLU(x - v) / l) = 1 for each batch.
+    Solves for v such that mean(max(lower_bound, (x - v) / l)) = 1.
     
     Args:
         x: Input data of shape (batch_size, num_samples)
         l: Scale parameter of shape (batch_size, 1) or scalar.
+        lower_bound: The clipping floor b (scalar or broadcastable).
     
     Returns:
         v: Solution of shape (batch_size, 1)
     """
-    # 1. Setup constants
     N = x.shape[-1]
-    target = N * l  # We want sum(ReLU(x-v)) = N * l
     
-    # 2. Sort x in descending order: x_(1) >= x_(2) ...
-    # shape: (batch_size, N)
+    # Calculate the raw floor value B = l * b
+    B = l * lower_bound
+    
+    # Modified target sum:
+    # We transform sum(max(b, (x-v)/l)) = N into:
+    # sum(ReLU(x - (v + B))) = N * l * (1 - lower_bound)
+    target_sum = N * (l - B)
+    
+    # 1. Sort descending
     x_sorted = jnp.sort(x, axis=-1)[:, ::-1]
     
-    # 3. Compute Cumulative Sums
-    # shape: (batch_size, N)
+    # 2. Compute Cumulative Sums
     cumsum_x = jnp.cumsum(x_sorted, axis=-1)
     
-    # 4. Create an index array k = [1, 2, ..., N]
-    # shape: (1, N)
+    # 3. Create index array k
     k_indices = jnp.arange(1, N + 1).reshape(1, -1)
     
-    # 5. Determine the number of active elements (k*)
-    # The condition for k active elements is: sum(x_top_k - x_k) < target
-    # If this holds, it means we must lower v below x_k to get enough mass.
+    # 4. Compute Excess Mass at the boundary (v = x_k)
+    # This is the sum of (x_i - x_k) for the top k terms
+    excess = cumsum_x - k_indices * x_sorted
     
-    # term_k represents the "mass" available strictly above the level x_(k)
-    # term_k = sum(x_(1)..x_(k)) - k * x_(k)
-    term_k = cumsum_x - k_indices * x_sorted
+    # 5. Determine active elements (k*)
+    # We find the largest k where the available excess mass is less than the target.
+    mask = excess < target_sum
+    k_star = jnp.sum(mask, axis=-1, keepdims=True)
     
-    # Mask is True where valid. Since term_k is monotonic, 
-    # we can sum the mask to find the transition point.
-    # k_star is the number of active elements.
-    mask = term_k < target
-    k_star = jnp.sum(mask, axis=-1, keepdims=True) # shape (batch_size, 1)
-    
-    # 6. Gather the relevant sum and compute v
-    # We need the sum of the top k_star elements. 
-    # Since indices are 0-based, we want index k_star - 1.
+    # 6. Solve for the shifted variable w = v + B
+    # w = (sum_active - target_sum) / k_star
     sum_active = jnp.take_along_axis(cumsum_x, k_star - 1, axis=-1)
+    w = (sum_active - target_sum) / k_star
     
-    # v = (sum_active - target) / k_star
-    v = (sum_active - target) / k_star
+    # 7. Shift back to get v
+    v = w - B
     
     return v
 
-def solve_v_squared_batch(x, l):
+def solve_v_squared_batch(x, l, lower_bound=0.0):
     """
-    Solves for v such that mean((ReLU(x - v) / l)^2) = 1.
+    Solves for v such that mean((max(lower_bound, (x - v) / l))^2) = 1.
     
     Args:
         x: Input data of shape (batch_size, num_samples)
         l: Scale parameter of shape (batch_size, 1) or scalar.
+        lower_bound: The clipping floor b.
     
     Returns:
         v: Solution of shape (batch_size, 1)
     """
     N = x.shape[-1]
-    # Target sum of squares: sum(ReLU(...)^2) = N * l^2
+    B = l * lower_bound
+    
+    # Target total energy: N * l^2
     C = N * (l ** 2)
     
     # 1. Sort descending
     x_sorted = jnp.sort(x, axis=-1)[:, ::-1]
     
-    # 2. Cumulative sums for moments
-    # S1: sum(x)
-    # S2: sum(x^2)
+    # 2. Cumulative sums
     cumsum_x = jnp.cumsum(x_sorted, axis=-1)
     cumsum_x2 = jnp.cumsum(x_sorted ** 2, axis=-1)
-    
-    # 3. Indices k = 1..N
     k_indices = jnp.arange(1, N + 1).reshape(1, -1)
     
-    # 4. Calculate "Energy at Boundary" (v = x_k)
-    # E_k = sum_{1..k} (x_i - x_k)^2
-    # Expansion: sum(x^2) - 2*x_k*sum(x) + k*x_k^2
-    energy_at_boundary = (
-        cumsum_x2 
-        - 2 * x_sorted * cumsum_x 
-        + k_indices * (x_sorted ** 2)
-    )
+    # 3. Calculate "Standard" Energy and Excess at boundary x_k
+    # Standard Energy: sum((x_i - x_k)^2)
+    energy_std = (cumsum_x2 - 2 * x_sorted * cumsum_x + k_indices * (x_sorted ** 2))
+    
+    # Excess Mass: sum(x_i - x_k)
+    excess = cumsum_x - k_indices * x_sorted
+    
+    # 4. Total Energy Check
+    # At the boundary v = x_k - B, the active set is exactly 1..k.
+    # The total squared error includes the active terms shifted by B and the inactive floor B.
+    # E_total = E_std + 2*B*Excess + N*B^2
+    energy_at_boundary = energy_std + 2 * B * excess + N * (B ** 2)
     
     # 5. Determine active set size k*
-    # We look for the largest k where the energy at boundary x_k is LESS than target C.
-    # If energy_at_boundary < C, it means we must lower v further (below x_k)
-    # to accumulate more squared error.
+    # Find largest k where energy at boundary is less than C
     mask = energy_at_boundary < C
-    k_star = jnp.sum(mask, axis=-1, keepdims=True)
+    k_star = jnp.maximum(jnp.sum(mask, axis=-1, keepdims=True), 1)
     
-    # Handle edge case: if C is very small, k_star might be 0? 
-    # Logic: sum(mask) gives us how many boundaries we passed.
-    # We clip to at least 1 to avoid division by zero (though mathematically k >= 1 usually).
-    k_star = jnp.maximum(k_star, 1)
+    # 6. Gather statistics
+    S1 = jnp.take_along_axis(cumsum_x, k_star - 1, axis=-1)
+    S2 = jnp.take_along_axis(cumsum_x2, k_star - 1, axis=-1)
     
-    # 6. Gather sufficient statistics for the valid k*
-    # Note: k_star is 1-based count, so index is k_star - 1
-    S1_active = jnp.take_along_axis(cumsum_x, k_star - 1, axis=-1)
-    S2_active = jnp.take_along_axis(cumsum_x2, k_star - 1, axis=-1)
+    # 7. Solve Quadratic
+    # We solve sum((x_i - v)^2) = C_active
+    # The target for the active portion is reduced by the fixed energy of the inactive floor.
+    C_active = C - (N - k_star) * (B ** 2)
     
-    # 7. Solve Quadratic: k*v^2 - 2*S1*v + (S2 - C) = 0
-    # Discriminant Delta = (2*S1)^2 - 4*k*(S2 - C)
-    # Simplified root formula: v = (S1 - sqrt(S1^2 - k*(S2 - C))) / k
-    # We use the negative root because v must be less than the mean of the active set
-    # to generate sufficient variance on the "left" side of the distribution.
+    # Discriminant: (2*S1)^2 - 4*k*(S2 - C_active)
+    delta = S1**2 - k_star * (S2 - C_active)
     
-    term_inside_sqrt = S1_active**2 - k_star * (S2_active - C)
-    
-    # Numerical safety: term should be positive, but clip 0 for float errors
-    term_inside_sqrt = jnp.maximum(term_inside_sqrt, 0.0)
-    
-    v = (S1_active - jnp.sqrt(term_inside_sqrt)) / k_star
+    # v = (S1 - sqrt(delta)) / k
+    v = (S1 - jnp.sqrt(jnp.maximum(delta, 0.0))) / k_star
     
     return v
 
@@ -221,6 +213,7 @@ class DPMDV2(Algorithm):
             running_std=jnp.float32(1.0)
         )
         self.use_ema = use_ema
+        self.clipped_lower_bound = clipped_lower_bound
 
         @jax.jit
         def stateless_update(
@@ -313,6 +306,20 @@ class DPMDV2(Algorithm):
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'negative_strictly_normalized_relu_linear':
+                    assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
+                    assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_linear is not compatible with clipped_lower_bound != -jnp.inf"
+                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_linear is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    normalized_diff = solve_v_batch(q_batch_action.T, alpha, lower_bound=self.clipped_lower_bound).T  # pass in [B, N] and get [B, 1]
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - normalized_diff) / alpha
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy_var = jnp.clip(q_weights, 0.0, jnp.inf)
+                    entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_relu_square':
                     assert not self.learnable_alpha, "normalized_relu_square is not compatible with learnable_alpha"
                     assert self.alpha_transformation == 'identity', "normalized_relu_square is not compatible with alpha_transformation != identity"
@@ -336,6 +343,20 @@ class DPMDV2(Algorithm):
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'negative_strictly_normalized_relu_square':
+                    assert not self.learnable_alpha, "strictly_normalized_relu_square is not compatible with learnable_alpha"
+                    assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_square is not compatible with clipped_lower_bound != -jnp.inf"
+                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_square is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    normalized_diff = solve_v_squared_batch(q_batch_action.T, alpha, lower_bound=self.clipped_lower_bound).T  # pass in [B, N] and get [B, 1]
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - normalized_diff) / alpha
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf) ** 2
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy_var = jnp.clip(q_weights, 0.0, jnp.inf)
+                    entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_leaky_relu_linear':
                     assert not self.learnable_alpha, "normalized_leaky_relu_linear is not compatible with learnable_alpha"
                     assert self.alpha_transformation == 'identity', "normalized_leaky_relu_linear is not compatible with alpha_transformation != identity"
