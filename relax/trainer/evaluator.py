@@ -7,12 +7,8 @@ from pathlib import Path
 import argparse
 import pickle
 import csv
-import wandb
-
 import numpy as np
 import jax
-from tensorboardX import SummaryWriter
-
 from relax.env import create_env
 from relax.utils.persistence import PersistFunction
 
@@ -53,12 +49,7 @@ if __name__ == "__main__":
     parser.add_argument("--env", type=str, required=True)
     parser.add_argument("--num_episodes", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--wandb_project", type=str, default=None)
-    parser.add_argument("--wandb_run_id", type=str, default=None)
     args = parser.parse_args()
-
-    if args.wandb_run_id:
-        wandb.init(project=args.wandb_project, id=args.wandb_run_id, resume="must")
 
     master_rng = np.random.default_rng(args.seed)
     env_seed, env_action_seed, policy_seed = map(int, master_rng.integers(0, 2**32 - 1, 3))
@@ -74,7 +65,6 @@ if __name__ == "__main__":
             act = policy_output
         return act.clip(-1.0, 1.0)
 
-    # logger = SummaryWriter(args.policy_root)
     logger = Logger(args.policy_root)
 
     while payload := sys.stdin.readline():
@@ -87,15 +77,7 @@ if __name__ == "__main__":
 
         ep_len = np.array(ep_len_list)
         ep_ret = np.array(ep_ret_list)
-        # logger.add_scalar("evaluate/episode_length", ep_len_mean.mean(), step)
-        # logger.add_scalar("evaluate/episode_return", ep_ret_mean.mean(), step)
-        # # logger.add_histogram("evaluate/episode_length", ep_len_mean, step)
-        # # logger.add_histogram("evaluate/episode_return", ep_ret_mean, step)
-        # logger.flush()
+        
         logger.log(step, ep_ret.mean(), ep_ret.std())
-        if args.wandb_run_id:
-            wandb.log({
-                "evaluate/episode_return": ep_ret.mean(),
-                "evaluate/episode_return_std": ep_ret.std(),
-                "evaluate/episode_length": ep_len.mean(),
-            }, step=step)
+        # Print results for the main process to capture and log to wandb
+        print(f"EVAL_METRICS:step={step},avg_ret={ep_ret.mean()},std_ret={ep_ret.std()},avg_len={ep_len.mean()}", flush=True)
