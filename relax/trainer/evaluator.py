@@ -7,6 +7,7 @@ from pathlib import Path
 import argparse
 import pickle
 import csv
+import wandb
 
 import numpy as np
 import jax
@@ -52,7 +53,12 @@ if __name__ == "__main__":
     parser.add_argument("--env", type=str, required=True)
     parser.add_argument("--num_episodes", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--wandb_project", type=str, default=None)
+    parser.add_argument("--wandb_run_id", type=str, default=None)
     args = parser.parse_args()
+
+    if args.wandb_run_id:
+        wandb.init(project=args.wandb_project, id=args.wandb_run_id, resume="must")
 
     master_rng = np.random.default_rng(args.seed)
     env_seed, env_action_seed, policy_seed = map(int, master_rng.integers(0, 2**32 - 1, 3))
@@ -87,3 +93,9 @@ if __name__ == "__main__":
         # # logger.add_histogram("evaluate/episode_return", ep_ret_mean, step)
         # logger.flush()
         logger.log(step, ep_ret.mean(), ep_ret.std())
+        if args.wandb_run_id:
+            wandb.log({
+                "evaluate/episode_return": ep_ret.mean(),
+                "evaluate/episode_return_std": ep_ret.std(),
+                "evaluate/episode_length": ep_len.mean(),
+            }, step=step)

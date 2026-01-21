@@ -101,15 +101,22 @@ class OffPolicyTrainer:
         self.eval_log_file = open(self.log_path / "eval_log.out", "a")
         self.eval_err_log_file = open(self.log_path / "eval_log.err", "a")
         eval_env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
+        evaluator_args = [
+            sys.executable,
+            "-m", "relax.trainer.evaluator",
+            str(self.log_path),
+            "--env", self.evaluate_env.spec.id,
+            "--num_episodes", str(self.evaluate_n_episode),
+            "--seed", str(0),
+        ]
+        if wandb.run is not None:
+            evaluator_args.extend([
+                "--wandb_project", wandb.run.project,
+                "--wandb_run_id", wandb.run.id,
+            ])
+        
         self.evaluator = subprocess.Popen(
-            [
-                sys.executable,
-                "-m", "relax.trainer.evaluator",
-                str(self.log_path),
-                "--env", self.evaluate_env.spec.id,
-                "--num_episodes", str(self.evaluate_n_episode),
-                "--seed", str(0),
-            ],
+            evaluator_args,
             stdin=subprocess.PIPE,
             stdout=self.eval_log_file,
             stderr=self.eval_err_log_file,
