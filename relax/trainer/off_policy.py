@@ -88,6 +88,7 @@ class OffPolicyTrainer:
                    dir=log_path,
                    group=wandb_group,
                    config=hparams if hparams is not None else {})
+        wandb.define_metric("*", step_metric="sample_step")
 
     def setup(self, dummy_data: Experience):
         self.algorithm.warmup(dummy_data)
@@ -200,8 +201,8 @@ class OffPolicyTrainer:
         ul.add(info)
 
         if ul.update_step % self.update_log_n_step == 0:
-            self.add_hist(dist_info, ul.update_step * 5)
-            ul.log(self.add_scalar)
+            self.add_hist(dist_info, self.sample_log.sample_step)
+            ul.log(self.add_scalar, step=self.sample_log.sample_step)
 
     def train(self, key: jax.Array):
         key, warmup_key = jax.random.split(key)
@@ -238,14 +239,14 @@ class OffPolicyTrainer:
 
     def add_scalar(self, tag: str, value: float, step: int):
         self.last_metrics[tag] = value
-        wandb.log({tag: value}, step=step)
+        wandb.log({tag: value, "sample_step": step})
         self.logger.add_scalar(tag, value, step)
         self.logger.flush()
         
     def add_hist(self, info_hist, step):
         for tag, value in info_hist.items():
             self.logger.add_histogram(tag, np.array(value), step)
-            wandb.log({tag: wandb.Histogram(np.array(value))}, step=step)
+            wandb.log({tag: wandb.Histogram(np.array(value)), "sample_step": step})
         self.logger.flush()
 
     def run(self, key: jax.Array):
