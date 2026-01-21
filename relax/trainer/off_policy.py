@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import subprocess
 import sys
+import threading
 from typing import Callable, Optional, Tuple
 
 import jax
@@ -87,6 +88,7 @@ class OffPolicyTrainer:
                    dir=log_path,
                    group=wandb_group,
                    config=hparams if hparams is not None else {})
+        wandb.define_metric("*", step_metric="sample_step")
 
     def setup(self, dummy_data: Experience):
         self.algorithm.warmup(dummy_data)
@@ -101,28 +103,45 @@ class OffPolicyTrainer:
         self.eval_log_file = open(self.log_path / "eval_log.out", "a")
         self.eval_err_log_file = open(self.log_path / "eval_log.err", "a")
         eval_env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
-        evaluator_args = [
-            sys.executable,
-            "-m", "relax.trainer.evaluator",
-            str(self.log_path),
-            "--env", self.evaluate_env.spec.id,
-            "--num_episodes", str(self.evaluate_n_episode),
-            "--seed", str(0),
-        ]
-        if wandb.run is not None:
-            evaluator_args.extend([
-                "--wandb_project", wandb.run.project,
-                "--wandb_run_id", wandb.run.id,
-            ])
-        
         self.evaluator = subprocess.Popen(
-            evaluator_args,
+            [
+                sys.executable,
+                "-m", "relax.trainer.evaluator",
+                str(self.log_path),
+                "--env", self.evaluate_env.spec.id,
+                "--num_episodes", str(self.evaluate_n_episode),
+                "--seed", str(0),
+            ],
             stdin=subprocess.PIPE,
-            stdout=self.eval_log_file,
+            stdout=subprocess.PIPE,
             stderr=self.eval_err_log_file,
             bufsize=0,
             env=eval_env,
         )
+
+        def log_reader():
+            while True:
+                line = self.evaluator.stdout.readline()
+                if not line:
+                    break
+                line_str = line.decode()
+                if self.eval_log_file:
+                    self.eval_log_file.write(line_str)
+                    self.eval_log_file.flush()
+                
+                if line_str.startswith("EVAL_METRICS:"):
+                    try:
+                        # Format: EVAL_METRICS:step=1000,avg_ret=10.0,std_ret=1.0,avg_len=50.0
+                        data = dict(item.split("=") for item in line_str.strip().split("EVAL_METRICS:")[1].split(","))
+                        step = int(data["step"])
+                        self.add_scalar("evaluate/episode_return", float(data["avg_ret"]), step)
+                        self.add_scalar("evaluate/episode_return_std", float(data["std_ret"]), step)
+                        self.add_scalar("evaluate/episode_length", float(data["avg_len"]), step)
+                    except Exception:
+                        pass
+        
+        self.eval_reader_thread = threading.Thread(target=log_reader, daemon=True)
+        self.eval_reader_thread.start()
 
     def warmup(self, key: jax.Array, obs: np.ndarray):
         step = 0
@@ -182,8 +201,8 @@ class OffPolicyTrainer:
         ul.add(info)
 
         if ul.update_step % self.update_log_n_step == 0:
-            self.add_hist(dist_info, ul.update_step * 5)
-            ul.log(self.add_scalar)
+            self.add_hist(dist_info, self.sample_log.sample_step)
+            ul.log(self.add_scalar, step=self.sample_log.sample_step)
 
     def train(self, key: jax.Array):
         key, warmup_key = jax.random.split(key)
@@ -220,14 +239,14 @@ class OffPolicyTrainer:
 
     def add_scalar(self, tag: str, value: float, step: int):
         self.last_metrics[tag] = value
-        wandb.log({tag: value}, step=step)
+        wandb.log({tag: value, "sample_step": step})
         self.logger.add_scalar(tag, value, step)
         self.logger.flush()
         
     def add_hist(self, info_hist, step):
         for tag, value in info_hist.items():
             self.logger.add_histogram(tag, np.array(value), step)
-            wandb.log({tag: wandb.Histogram(np.array(value))}, step=step)
+            wandb.log({tag: wandb.Histogram(np.array(value)), "sample_step": step})
         self.logger.flush()
 
     def run(self, key: jax.Array):

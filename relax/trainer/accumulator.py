@@ -55,8 +55,9 @@ class SampleLog:
 
         return done
 
-    def log(self, log_fn: Callable[[str, float, int], None]):
-        self.accumulator.log(lambda k, v: log_fn(k, v, self.sample_step))
+    def log(self, log_fn: Callable[[str, float, int], None], step: int = None):
+        if step is None: step = self.sample_step
+        self.accumulator.log(lambda k, v: log_fn(k, v, step))
         self.accumulator.reset()
 
 
@@ -87,8 +88,9 @@ class VectorSampleLog:
 
         return done_count > 0
 
-    def log(self, log_fn: Callable[[str, float, int], None]):
-        self.accumulator.log(lambda k, v: log_fn(k, v, self.sample_step))
+    def log(self, log_fn: Callable[[str, float, int], None], step: int = None):
+        if step is None: step = self.sample_step
+        self.accumulator.log(lambda k, v: log_fn(k, v, step))
         self.accumulator.reset()
 
 class VectorFragmentSampleLog:
@@ -111,8 +113,9 @@ class VectorFragmentSampleLog:
         self.accumulator.add_vec("episode_length", complete_episode_length.tolist())
         return done_count > 0
 
-    def log(self, log_fn: Callable[[str, float, int], None]):
-        self.accumulator.log(lambda k, v: log_fn(k, v, self.sample_step))
+    def log(self, log_fn: Callable[[str, float, int], None], step: int = None):
+        if step is None: step = self.sample_step
+        self.accumulator.log(lambda k, v: log_fn(k, v, step))
         self.accumulator.reset()
 
 @njit([(nt.float64[:, ::1], nt.boolean[:, ::1], nt.boolean[:, ::1], nt.float64[::1], nt.int64[::1], nt.int64, nt.int64)], cache=True)
@@ -158,8 +161,9 @@ class UpdateLog:
         self.update_step += 1
         self.accumulator.add_all(metrics)
 
-    def log(self, log_fn: Callable[[str, float, int], None]):
-        self.accumulator.log(lambda k, v: log_fn(k, v, self.update_step * 5))
+    def log(self, log_fn: Callable[[str, float, int], None], step: int = None):
+        if step is None: step = self.update_step
+        self.accumulator.log(lambda k, v: log_fn(k, v, step))
         self.accumulator.reset()
 
 
