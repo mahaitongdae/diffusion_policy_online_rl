@@ -41,9 +41,12 @@ def plot_mean(patterns_dict: Dict, env_name, fig_name = None,
 
 
 def load_best_results(pattern, env_name, show_df=False,
-              max_steps=None):
-    package_path = Path(relax.__file__)
-    logdir = package_path.parent.parent / 'logs' / env_name
+              max_steps=None, verbose=False, logdir=None):
+    if logdir is None:
+        package_path = Path(relax.__file__)
+        logdir = package_path.parent.parent / 'logs' / env_name
+    else:
+        logdir = Path(logdir) / env_name
     # pattern = r".*diffv2.*noise_scale_0\.0\d$"
     # pattern = r".*diffv2.*noise_scale_0\.09"
     # pattern = r".*qsm.*01-07.*qsm_lr_schedule$"
@@ -52,7 +55,14 @@ def load_best_results(pattern, env_name, show_df=False,
     dfs = []
     for dir in matching_dir:
         csv_path = dir / 'log.csv'
-        df = pd.read_csv(str(csv_path))
+        try:
+            df = pd.read_csv(str(csv_path))
+        except Exception as e:
+            if isinstance(e, FileNotFoundError):
+                print(f"File not found in directory: {dir}")
+            else:
+                raise e
+            continue
         if len(df) > 0:
             if max_steps is not None:
                 df = df[df['step'] < max_steps]
@@ -64,16 +74,20 @@ def load_best_results(pattern, env_name, show_df=False,
         else:
             continue
     if len(dfs) == 0:
-        print(f"No results found for {pattern}")
+        if verbose:
+            print(f"No results found for {pattern}")
         return None
     total_df = pd.concat(dfs, ignore_index=True, axis=1).T
     if show_df:
         print(total_df.to_markdown())
-    if "Pusher" in env_name or "Reacher" in env_name:
+    if verbose and ("Pusher" in env_name or "Reacher" in env_name):
         print(f"${total_df['avg_ret'].mean():.2f} \pm {total_df['avg_ret'].std():.2f}$")
     else:   
-        print(f"${total_df['avg_ret'].mean():.0f} \pm {total_df['avg_ret'].std():.0f}$")
+        if verbose:
+            print(f"${total_df['avg_ret'].mean():.0f} \pm {total_df['avg_ret'].std():.0f}$")
     return total_df
+
+
 
 if __name__ == "__main__":
     # pattern = r".*diffv2.*01-07.*diffv2_ema$"

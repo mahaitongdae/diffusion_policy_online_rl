@@ -32,6 +32,117 @@ class Diffv2TrainState(NamedTuple):
 def softplus_inv(x: float):
     return jnp.log(jnp.exp(x) - 1)
 
+def solve_v_batch(x, l, lower_bound=0.0):
+    """
+    Solves for v such that mean(max(lower_bound, (x - v) / l)) = 1.
+    
+    Args:
+        x: Input data of shape (batch_size, num_samples)
+        l: Scale parameter of shape (batch_size, 1) or scalar.
+        lower_bound: The clipping floor b (scalar or broadcastable).
+    
+    Returns:
+        v: Solution of shape (batch_size, 1)
+    """
+    N = x.shape[-1]
+    
+    # Calculate the raw floor value B = l * b
+    B = l * lower_bound
+    
+    # Modified target sum:
+    # We transform sum(max(b, (x-v)/l)) = N into:
+    # sum(ReLU(x - (v + B))) = N * l * (1 - lower_bound)
+    target_sum = N * (l - B)
+    
+    # 1. Sort descending
+    x_sorted = jnp.sort(x, axis=-1)[:, ::-1]
+    
+    # 2. Compute Cumulative Sums
+    cumsum_x = jnp.cumsum(x_sorted, axis=-1)
+    
+    # 3. Create index array k
+    k_indices = jnp.arange(1, N + 1).reshape(1, -1)
+    
+    # 4. Compute Excess Mass at the boundary (v = x_k)
+    # This is the sum of (x_i - x_k) for the top k terms
+    excess = cumsum_x - k_indices * x_sorted
+    
+    # 5. Determine active elements (k*)
+    # We find the largest k where the available excess mass is less than the target.
+    mask = excess < target_sum
+    k_star = jnp.sum(mask, axis=-1, keepdims=True)
+    
+    # 6. Solve for the shifted variable w = v + B
+    # w = (sum_active - target_sum) / k_star
+    sum_active = jnp.take_along_axis(cumsum_x, k_star - 1, axis=-1)
+    w = (sum_active - target_sum) / k_star
+    
+    # 7. Shift back to get v
+    v = w - B
+    
+    return v
+
+def solve_v_squared_batch(x, l, lower_bound=0.0):
+    """
+    Solves for v such that mean((max(lower_bound, (x - v) / l))^2) = 1.
+    
+    Args:
+        x: Input data of shape (batch_size, num_samples)
+        l: Scale parameter of shape (batch_size, 1) or scalar.
+        lower_bound: The clipping floor b.
+    
+    Returns:
+        v: Solution of shape (batch_size, 1)
+    """
+    N = x.shape[-1]
+    B = l * lower_bound
+    
+    # Target total energy: N * l^2
+    C = N * (l ** 2)
+    
+    # 1. Sort descending
+    x_sorted = jnp.sort(x, axis=-1)[:, ::-1]
+    
+    # 2. Cumulative sums
+    cumsum_x = jnp.cumsum(x_sorted, axis=-1)
+    cumsum_x2 = jnp.cumsum(x_sorted ** 2, axis=-1)
+    k_indices = jnp.arange(1, N + 1).reshape(1, -1)
+    
+    # 3. Calculate "Standard" Energy and Excess at boundary x_k
+    # Standard Energy: sum((x_i - x_k)^2)
+    energy_std = (cumsum_x2 - 2 * x_sorted * cumsum_x + k_indices * (x_sorted ** 2))
+    
+    # Excess Mass: sum(x_i - x_k)
+    excess = cumsum_x - k_indices * x_sorted
+    
+    # 4. Total Energy Check
+    # At the boundary v = x_k - B, the active set is exactly 1..k.
+    # The total squared error includes the active terms shifted by B and the inactive floor B.
+    # E_total = E_std + 2*B*Excess + N*B^2
+    energy_at_boundary = energy_std + 2 * B * excess + N * (B ** 2)
+    
+    # 5. Determine active set size k*
+    # Find largest k where energy at boundary is less than C
+    mask = energy_at_boundary < C
+    k_star = jnp.maximum(jnp.sum(mask, axis=-1, keepdims=True), 1)
+    
+    # 6. Gather statistics
+    S1 = jnp.take_along_axis(cumsum_x, k_star - 1, axis=-1)
+    S2 = jnp.take_along_axis(cumsum_x2, k_star - 1, axis=-1)
+    
+    # 7. Solve Quadratic
+    # We solve sum((x_i - v)^2) = C_active
+    # The target for the active portion is reduced by the fixed energy of the inactive floor.
+    C_active = C - (N - k_star) * (B ** 2)
+    
+    # Discriminant: (2*S1)^2 - 4*k*(S2 - C_active)
+    delta = S1**2 - k_star * (S2 - C_active)
+    
+    # v = (S1 - sqrt(delta)) / k
+    v = (S1 - jnp.sqrt(jnp.maximum(delta, 0.0))) / k_star
+    
+    return v
+
 class DPMDV2(Algorithm):
 
     def __init__(
@@ -102,6 +213,7 @@ class DPMDV2(Algorithm):
             running_std=jnp.float32(1.0)
         )
         self.use_ema = use_ema
+        self.clipped_lower_bound = clipped_lower_bound
 
         @jax.jit
         def stateless_update(
@@ -182,6 +294,32 @@ class DPMDV2(Algorithm):
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'strictly_normalized_relu_linear':
+                    assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
+                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_linear is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    normalized_diff = solve_v_batch(q_batch_action.T, alpha).T  # pass in [B, N] and get [B, 1]
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - normalized_diff) / alpha
+                    q_weights = jax.nn.relu(q_normalized)
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'negative_strictly_normalized_relu_linear':
+                    assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
+                    assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_linear is not compatible with clipped_lower_bound != -jnp.inf"
+                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_linear is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    normalized_diff = solve_v_batch(q_batch_action.T, alpha, lower_bound=self.clipped_lower_bound).T  # pass in [B, N] and get [B, 1]
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - normalized_diff) / alpha
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy_var = jnp.clip(q_weights, 0.0, jnp.inf)
+                    entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_relu_square':
                     assert not self.learnable_alpha, "normalized_relu_square is not compatible with learnable_alpha"
                     assert self.alpha_transformation == 'identity', "normalized_relu_square is not compatible with alpha_transformation != identity"
@@ -193,6 +331,32 @@ class DPMDV2(Algorithm):
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'strictly_normalized_relu_square':
+                    assert not self.learnable_alpha, "strictly_normalized_relu_square is not compatible with learnable_alpha"
+                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_square is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    normalized_diff = solve_v_squared_batch(q_batch_action.T, alpha).T  # pass in [B, N] and get [B, 1]
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - normalized_diff) / alpha
+                    q_weights = jax.nn.relu(q_normalized) ** 2
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'negative_strictly_normalized_relu_square':
+                    assert not self.learnable_alpha, "strictly_normalized_relu_square is not compatible with learnable_alpha"
+                    assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_square is not compatible with clipped_lower_bound != -jnp.inf"
+                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_square is not compatible with alpha_transformation != identity"
+                    # q_min = get_min_q(next_obs, next_action)
+                    normalized_diff = solve_v_squared_batch(q_batch_action.T, alpha, lower_bound=self.clipped_lower_bound).T  # pass in [B, N] and get [B, 1]
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - normalized_diff) / alpha
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf) ** 2
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy_var = jnp.clip(q_weights, 0.0, jnp.inf)
+                    entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_leaky_relu_linear':
                     assert not self.learnable_alpha, "normalized_leaky_relu_linear is not compatible with learnable_alpha"
                     assert self.alpha_transformation == 'identity', "normalized_leaky_relu_linear is not compatible with alpha_transformation != identity"
@@ -275,6 +439,13 @@ class DPMDV2(Algorithm):
                     q_mean = jnp.mean(q_batch_action)
                     q_std = jnp.std(q_batch_action, axis=0).mean()
                     entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
+                elif self.reweight_type == 'strictly_normalized_logsumexp':
+                    scaled_q = q_batch_action / alpha
+                    Z = jax.nn.logsumexp(scaled_q, axis=0, keepdims=True)
+                    q_weights = jnp.exp(scaled_q - Z) * self.agent.num_particles  # [N, B]
+                    q_mean = jnp.mean(q_batch_action)
+                    q_std = jnp.std(q_batch_action, axis=0).mean()
+                    entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'exp':
                     q_best_ind = jnp.argmax(q_batch_action, axis=0, keepdims=True)
                     act_best_of_n = jnp.take_along_axis(batch_action, q_best_ind[..., None], axis=0).squeeze(axis=0)
@@ -303,7 +474,7 @@ class DPMDV2(Algorithm):
             (total_loss, (q_weights, scaled_q, q_mean, q_std, entropy)), policy_grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(policy_params)
 
             # update alpha
-            if self.use_analytical_alpha_grad:
+            if self.use_analytical_alpha_grad and 'logsumexp' in self.reweight_type:
                 alpha_grad = (self.kl_constraint + entropy - jnp.log(self.agent.num_particles)).mean()
                 alpha_loss = 0.0
             else:

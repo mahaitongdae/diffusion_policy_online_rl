@@ -7,11 +7,8 @@ from pathlib import Path
 import argparse
 import pickle
 import csv
-
 import numpy as np
 import jax
-from tensorboardX import SummaryWriter
-
 from relax.env import create_env
 from relax.utils.persistence import PersistFunction
 
@@ -68,7 +65,6 @@ if __name__ == "__main__":
             act = policy_output
         return act.clip(-1.0, 1.0)
 
-    # logger = SummaryWriter(args.policy_root)
     logger = Logger(args.policy_root)
 
     while payload := sys.stdin.readline():
@@ -81,9 +77,7 @@ if __name__ == "__main__":
 
         ep_len = np.array(ep_len_list)
         ep_ret = np.array(ep_ret_list)
-        # logger.add_scalar("evaluate/episode_length", ep_len_mean.mean(), step)
-        # logger.add_scalar("evaluate/episode_return", ep_ret_mean.mean(), step)
-        # # logger.add_histogram("evaluate/episode_length", ep_len_mean, step)
-        # # logger.add_histogram("evaluate/episode_return", ep_ret_mean, step)
-        # logger.flush()
+        
         logger.log(step, ep_ret.mean(), ep_ret.std())
+        # Print results for the main process to capture and log to wandb
+        print(f"EVAL_METRICS:step={step},avg_ret={ep_ret.mean()},std_ret={ep_ret.std()},avg_len={ep_len.mean()}", flush=True)

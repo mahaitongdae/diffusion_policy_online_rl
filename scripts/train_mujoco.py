@@ -1,5 +1,6 @@
 import argparse
 import os.path
+import sys
 from pathlib import Path
 import time
 from functools import partial
@@ -56,12 +57,14 @@ if __name__ == "__main__":
     parser.add_argument("--num_particles", type=int, default=4)
     parser.add_argument("--num_best_of_n", type=int, default=32)
     parser.add_argument("--noise_scale", type=float, default=0.1)
+    parser.add_argument("--initial_noise_scale", type=float, default=0.5)
     parser.add_argument("--cluster", default=False, action="store_true")
+    parser.add_argument("--save_to_shared_folder", default=True, action="store_true")
     parser.add_argument("--debug", action='store_true', default=False)
     parser.add_argument("--beta_schedule_scale", type=float, default=1.0)
     parser.add_argument("--beta_schedule_type", type=str, default='linear')
     parser.add_argument("--learnable_alpha", default=False, action='store_true')
-    parser.add_argument("--update_additive_noise_scale", default=False, action='store_true')
+    parser.add_argument("--update_additive_noise_scale", default=True, action='store_true')
     parser.add_argument("--kl_constraint", type=float, default=1.0)
     parser.add_argument("--init_alpha", type=float, default=1e-4)
     parser.add_argument("--reweight_type", type=str, default='logsumexp')  # 'exp', 'none'
@@ -147,7 +150,8 @@ if __name__ == "__main__":
                                           beta_schedule_scale=args.beta_schedule_scale,
                                           initial_alpha=args.init_alpha,
                                           alpha_transformation=args.alpha_transformation,
-                                          use_flow=args.use_flow)
+                                          use_flow=args.use_flow,
+                                          initial_log_noise_scale=math.log(args.initial_noise_scale))
         algorithm = DPMDV2(agent, params, lr=args.lr, 
                            alpha_lr=args.alpha_lr, 
                            delay_alpha_update=args.delay_alpha_update, 
@@ -215,9 +219,24 @@ if __name__ == "__main__":
 
     if args.cluster:
         PROJECT_ROOT = Path('/n/netscratch/nali_lab_seas/Lab/haitongma/sdac_logs')
+    if args.save_to_shared_folder:
+        os.makedirs('/mnt/shared/haitongma/data/diffusion_online_rl', exist_ok=True)
+        PROJECT_ROOT = Path('/mnt/shared/haitongma/data/diffusion_online_rl')
     
     exp_dir = PROJECT_ROOT / "logs" / args.env / (args.alg + '_' + time.strftime("%Y-%m-%d_%H-%M-%S") + f'_s{args.seed}_{args.suffix}')
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save the command to a text file
+    with open(os.path.join(exp_dir, 'command.txt'), 'w') as f:
+        f.write(' '.join(sys.argv))
+
+    # Save the arguments to a YAML file
     args_dict = vars(args)
+    with open(os.path.join(exp_dir, 'config.yaml'), 'w') as yaml_file:
+        yaml.dump(args_dict, yaml_file)
+
+    log_git_details(log_file=os.path.join(exp_dir, 'dacer.diff'))
+
     trainer = OffPolicyTrainer(
         env=env,
         algorithm=algorithm,
@@ -235,10 +254,5 @@ if __name__ == "__main__":
     )
 
     trainer.setup(Experience.create_example(obs_dim, act_dim, trainer.batch_size))
-    log_git_details(log_file=os.path.join(exp_dir, 'dacer.diff'))
     
-    # Save the arguments to a YAML file
-    
-    with open(os.path.join(exp_dir, 'config.yaml'), 'w') as yaml_file:
-        yaml.dump(args_dict, yaml_file)
     trainer.run(train_key)
