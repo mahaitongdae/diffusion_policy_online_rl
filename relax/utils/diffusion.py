@@ -148,7 +148,7 @@ class GaussianDiffusion:
         return loss.mean()
 
     def weighted_p_loss(self, key: jax.Array, weights: jax.Array, model: DiffusionModel, t: jax.Array,
-                        x_start: jax.Array):
+                        x_start: jax.Array, negative_weights_regularization: float = 0.0):
         if len(weights.shape) == 1:
             weights = weights.reshape(-1, 1)
         assert t.ndim == 1 and t.shape[0] == x_start.shape[0]
@@ -156,6 +156,8 @@ class GaussianDiffusion:
         x_noisy = jax.vmap(self.q_sample)(t, x_start, noise)
         noise_pred = model(t, x_noisy)
         loss = weights * optax.squared_error(noise_pred, noise)
+        if negative_weights_regularization > 0.0:
+            loss += negative_weights_regularization * jnp.where(weights < 0, noise_pred ** 2, 0)
         return loss.mean()
     
     def reverse_samping_weighted_p_loss(self, noise: jax.Array, weights: jax.Array, model: DiffusionModel, t: jax.Array,

@@ -72,6 +72,8 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_group", type=str, default="debug")
     parser.add_argument("--clip_lower_bound", type=float, default=-0.1)
     parser.add_argument("--eval_env", type=str, default='None')
+    parser.add_argument("--negative_weights_regularization", type=float, default=0.0)
+    parser.add_argument("--target_noise_scale", type=float, default=0.1)
     args = parser.parse_args()
 
     if args.debug:
@@ -160,7 +162,9 @@ if __name__ == "__main__":
                            alpha_transformation=args.alpha_transformation,
                            reweight_type=args.reweight_type,
                            delay_log_noise_scale_update=args.delay_log_noise_scale_update,
-                           clipped_lower_bound=args.clip_lower_bound)
+                           clipped_lower_bound=args.clip_lower_bound,
+                           negative_weights_regularization=args.negative_weights_regularization,
+                           target_noise_scale=args.target_noise_scale)
     elif args.alg == 'idem':
         def mish(x: jax.Array):
             return x * jnp.tanh(jax.nn.softplus(x))

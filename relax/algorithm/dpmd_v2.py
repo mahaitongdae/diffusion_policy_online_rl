@@ -170,6 +170,7 @@ class DPMDV2(Algorithm):
         use_analytical_alpha_grad: bool = True,
         delay_log_noise_scale_update: int = 250,
         clipped_lower_bound: float = -0.1,
+        negative_weights_regularization: float = 0.0,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -214,7 +215,8 @@ class DPMDV2(Algorithm):
         )
         self.use_ema = use_ema
         self.clipped_lower_bound = clipped_lower_bound
-
+        self.negative_weights_regularization = negative_weights_regularization
+        
         @jax.jit
         def stateless_update(
             key: jax.Array, state: Diffv2TrainState, data: Experience
@@ -446,6 +448,13 @@ class DPMDV2(Algorithm):
                     q_mean = jnp.mean(q_batch_action)
                     q_std = jnp.std(q_batch_action, axis=0).mean()
                     entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
+                elif self.reweight_type == 'negative_strictly_normalized_logsumexp':
+                    scaled_q = q_batch_action / alpha
+                    Z = jax.nn.logsumexp(scaled_q, axis=0, keepdims=True)
+                    q_weights = jnp.exp(scaled_q - Z) * self.agent.num_particles + self.clipped_lower_bound  # [N, B]
+                    q_mean = jnp.mean(q_batch_action)
+                    q_std = jnp.std(q_batch_action, axis=0).mean()
+                    entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'exp':
                     q_best_ind = jnp.argmax(q_batch_action, axis=0, keepdims=True)
                     act_best_of_n = jnp.take_along_axis(batch_action, q_best_ind[..., None], axis=0).squeeze(axis=0)
@@ -463,7 +472,11 @@ class DPMDV2(Algorithm):
                 else:
                     t = jax.random.randint(diffusion_time_key, (self.agent.num_particles, obs.shape[0],), 0, self.agent.num_timesteps)
                     
-                loss_fn = partial(self.agent.diffusion.weighted_p_loss, key=diffusion_noise_key, model=denoiser)
+                loss_fn = partial(
+                    self.agent.diffusion.weighted_p_loss, 
+                    key=diffusion_noise_key, 
+                    model=denoiser, 
+                    negative_weights_regularization=self.negative_weights_regularization)
                 loss = jax.vmap(loss_fn)(
                     weights=jax.lax.stop_gradient(q_weights), 
                     t=t, 
