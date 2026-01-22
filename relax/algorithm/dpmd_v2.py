@@ -307,7 +307,7 @@ class DPMDV2(Algorithm):
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'negative_strictly_normalized_relu_linear':
-                    assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
+                    assert not self.learnable_alpha, "negative_strictly_normalized_relu_linear is not compatible with learnable_alpha"
                     assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_linear is not compatible with clipped_lower_bound != -jnp.inf"
                     # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
@@ -443,6 +443,13 @@ class DPMDV2(Algorithm):
                     scaled_q = q_batch_action / alpha
                     Z = jax.nn.logsumexp(scaled_q, axis=0, keepdims=True)
                     q_weights = jnp.exp(scaled_q - Z) * self.agent.num_particles  # [N, B]
+                    q_mean = jnp.mean(q_batch_action)
+                    q_std = jnp.std(q_batch_action, axis=0).mean()
+                    entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
+                elif self.reweight_type == 'negative_strictly_normalized_logsumexp':
+                    scaled_q = q_batch_action / alpha
+                    Z = jax.nn.logsumexp(scaled_q, axis=0, keepdims=True)
+                    q_weights = jnp.exp(scaled_q - Z) * self.agent.num_particles - self.clipped_lower_bound  # [N, B]
                     q_mean = jnp.mean(q_batch_action)
                     q_std = jnp.std(q_batch_action, axis=0).mean()
                     entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
