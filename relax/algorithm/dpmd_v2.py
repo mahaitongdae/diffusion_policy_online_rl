@@ -171,6 +171,8 @@ class DPMDV2(Algorithm):
         delay_log_noise_scale_update: int = 250,
         clipped_lower_bound: float = -0.1,
         negative_weights_regularization: float = 0.0,
+        use_env_interaction_noise: bool = False,
+        use_sample_pi_noise: bool = False,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -216,6 +218,8 @@ class DPMDV2(Algorithm):
         self.use_ema = use_ema
         self.clipped_lower_bound = clipped_lower_bound
         self.negative_weights_regularization = negative_weights_regularization
+        self.use_env_interaction_noise = use_env_interaction_noise
+        self.use_sample_pi_noise = use_sample_pi_noise
         
         @jax.jit
         def stateless_update(
@@ -272,8 +276,10 @@ class DPMDV2(Algorithm):
             q1_params = optax.apply_updates(q1_params, q1_update)
             q2_params = optax.apply_updates(q2_params, q2_update)
             
+            sample_log_noise_scale = log_noise_scale if self.use_sample_pi_noise else -jnp.inf
+            
             batch_action, q_batch_action = self.agent.get_batch_action_with_q(
-                new_eval_key, (target_policy_params, log_noise_scale, target_q1_params, target_q2_params), obs
+                new_eval_key, (target_policy_params, sample_log_noise_scale, target_q1_params, target_q2_params), obs
                 )  # [N, B, A], [N, B]
 
 
@@ -455,12 +461,15 @@ class DPMDV2(Algorithm):
                     q_mean = jnp.mean(q_batch_action)
                     q_std = jnp.std(q_batch_action, axis=0).mean()
                     entropy = jax.scipy.special.entr(jax.nn.softmax(q_batch_action / alpha, axis=0)).sum(axis=0) # q_batch_action [N, B]
-                elif self.reweight_type == 'exp':
+                elif self.reweight_type == 'best_of_n':
                     q_best_ind = jnp.argmax(q_batch_action, axis=0, keepdims=True)
-                    act_best_of_n = jnp.take_along_axis(batch_action, q_best_ind[..., None], axis=0).squeeze(axis=0)
+                    act_best_of_n = jnp.take_along_axis(batch_action, q_best_ind[..., None], axis=0) # .squeeze(axis=0)
+                    act_best_of_n = act_best_of_n.repeat(self.agent.num_particles, axis=0)
+                    q_weights = jnp.ones_like(q_batch_action)
                     scaled_q = (q_batch_action - running_mean) / (running_std + 1e-6)
                     q_mean = jnp.mean(q_best_ind.squeeze(axis=0))
                     q_std = jnp.std(q_best_ind.squeeze(axis=0))
+                    entropy = jnp.zeros(q_batch_action.shape[1])
                     
                     
                 else:
@@ -642,3 +651,10 @@ class DPMDV2(Algorithm):
     def get_action(self, key: jax.Array, obs: np.ndarray) -> np.ndarray:
         action = self._get_action(key, self.get_policy_params_to_save(), obs)
         return np.asarray(action)
+    
+    def get_environment_interaction_policy_params(self):
+        if self.use_env_interaction_noise:
+            return self.get_policy_params()
+        else:
+            policy_params, log_noise_scale, q1_params, q2_params = self.get_policy_params()
+            return (policy_params, -jnp.inf, q1_params, q2_params)

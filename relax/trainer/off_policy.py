@@ -171,7 +171,7 @@ class OffPolicyTrainer:
     def sample(self, sample_key: jax.Array, obs: np.ndarray):
         sl = self.sample_log
 
-        action = self.algorithm.get_action(sample_key, obs)
+        action = self.algorithm.get_env_interaction_action(sample_key, obs)
         next_obs, reward, terminated, truncated, info = self.env.step(action)
 
         experience = Experience.create(obs, action, reward, terminated, truncated, next_obs, info)

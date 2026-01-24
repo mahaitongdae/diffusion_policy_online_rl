@@ -30,6 +30,10 @@ class Algorithm:
     def get_deterministic_action(self, obs: np.ndarray) -> np.ndarray:
         action = self._get_deterministic_action(self.get_policy_params(), obs)
         return np.asarray(action)
+    
+    def get_env_interaction_action(self, key: jax.Array, obs: np.ndarray) -> np.ndarray:
+        action = self._get_action(key, self.get_policy_params(), obs)
+        return np.asarray(action)
 
     def get_value(self, obs: np.ndarray) -> np.ndarray:
         value = self._get_value(self.get_value_params(), obs)
@@ -84,6 +88,12 @@ class Algorithm:
 
     def get_value_params(self):
         return self.state.params.value
+    
+    def get_environment_interaction_policy_params(self):
+        """
+        If not overridden, return the same as get_policy_params()
+        """
+        return self.get_policy_params()
 
     def warmup(self, data: Experience) -> None:
         key = jax.random.key(0)
