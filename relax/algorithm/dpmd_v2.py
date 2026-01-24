@@ -171,6 +171,7 @@ class DPMDV2(Algorithm):
         delay_log_noise_scale_update: int = 250,
         clipped_lower_bound: float = -0.1,
         negative_weights_regularization: float = 0.0,
+        noise_scale_lr: float = 7e-3,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -187,7 +188,7 @@ class DPMDV2(Algorithm):
         )
         self.policy_optim = optax.adam(learning_rate=lr_schedule)
         self.alpha_optim = optax.adam(alpha_lr)
-        self.noise_optim = optax.adam(learning_rate=7e-3)
+        self.noise_optim = optax.adam(learning_rate=noise_scale_lr)
         self.entropy = 0.0
         self.reweight_type = reweight_type
         self.learnable_alpha = learnable_alpha

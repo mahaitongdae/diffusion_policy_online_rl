@@ -74,6 +74,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval_env", type=str, default='None')
     parser.add_argument("--negative_weights_regularization", type=float, default=0.0)
     parser.add_argument("--target_noise_scale", type=float, default=0.1)
+    parser.add_argument("--noise_scale_lr", type=float, default=7e-3)
     args = parser.parse_args()
 
     if args.debug:
@@ -164,7 +165,8 @@ if __name__ == "__main__":
                            delay_log_noise_scale_update=args.delay_log_noise_scale_update,
                            clipped_lower_bound=args.clip_lower_bound,
                            negative_weights_regularization=args.negative_weights_regularization,
-                           target_noise_scale=args.target_noise_scale)
+                           target_noise_scale=args.target_noise_scale,
+                           noise_scale_lr=args.noise_scale_lr)
     elif args.alg == 'idem':
         def mish(x: jax.Array):
             return x * jnp.tanh(jax.nn.softplus(x))
