@@ -14,6 +14,9 @@ dill==0.3.8
 # free-mujoco-py
 matplotlib
 scikit-learn
+flatbuffers
+wandb
+pyyaml
 
 # Utility
 tqdm

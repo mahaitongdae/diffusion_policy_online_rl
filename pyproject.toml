@@ -1,14 +1,32 @@
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "relax"
+name = "diffusion-policy-online-rl"
 version = "0.1.0"
-description = "Reinforcement Learning with JAX."
-readme = "README.md"
-requires-python = ">=3.8"
+description = "Diffusion Policy Online RL"
+requires-python = ">=3.9"
+dependencies = [
+    # Fundamental
+    "jax[cuda12]",
+    "optax",
+    "dm-haiku",
+    "numpyro",
+    "numba",
+    "tensorboardX",
+    "ipdb",
+    
+    # Used by environment
+    "gymnasium[mujoco]==1.0.0",
+    "dill==0.3.8",
+    "matplotlib",
+    "scikit-learn",
+    "flatbuffers",
+    "wandb",
+    "pyyaml",
+    
+    # Utility
+    "tqdm",
+    "setproctitle",
+]
 
-[tool.black]
-line-length = 120
-target-version = ['py39']
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

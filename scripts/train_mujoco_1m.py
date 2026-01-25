@@ -41,7 +41,7 @@ if __name__ == "__main__":
     parser.add_argument("--alg", type=str, default="dpmdv2")
     parser.add_argument("--env", type=str, default="HalfCheetah-v4")
     parser.add_argument("--suffix", type=str, default="debug")
-    parser.add_argument("--num_vec_envs", type=int, default=5)
+    parser.add_argument("--num_vec_envs", type=int, default=0)
     parser.add_argument("--hidden_num", type=int, default=3)
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--diffusion_steps", type=int, default=20)
@@ -50,11 +50,13 @@ if __name__ == "__main__":
     parser.add_argument("--total_step", type=int, default=int(1e6))
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--lr_schedule_end", type=float, default=3e-5)
+    parser.add_argument("--lr_schedule_steps", type=int, default=int(5e5))
+    parser.add_argument("--lr_schedule_begin", type=int, default=int(2.5e5))
     parser.add_argument("--alpha_lr", type=float, default=7e-3)
-    parser.add_argument("--delay_alpha_update", type=float, default=250)
-    parser.add_argument("--delay_log_noise_scale_update", type=float, default=250)
+    parser.add_argument("--delay_alpha_update", type=float, default=1250)
+    parser.add_argument("--delay_log_noise_scale_update", type=float, default=1250)
     parser.add_argument("--seed", type=int, default=100)
-    parser.add_argument("--num_particles", type=int, default=4)
+    parser.add_argument("--num_particles", type=int, default=32)
     parser.add_argument("--num_best_of_n", type=int, default=32)
     parser.add_argument("--noise_scale", type=float, default=0.1)
     parser.add_argument("--initial_noise_scale", type=float, default=0.5)
@@ -63,7 +65,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action='store_true', default=False)
     parser.add_argument("--beta_schedule_scale", type=float, default=1.0)
     parser.add_argument("--beta_schedule_type", type=str, default='linear')
-    parser.add_argument("--learnable_alpha", default=False, action='store_true')
+    parser.add_argument("--learnable_alpha", default=True, action='store_true')
     parser.add_argument("--update_additive_noise_scale", default=True, action='store_true')
     parser.add_argument("--kl_constraint", type=float, default=1.0)
     parser.add_argument("--init_alpha", type=float, default=1e-4)
@@ -140,6 +142,8 @@ if __name__ == "__main__":
                          alpha_lr=args.alpha_lr, 
                          delay_alpha_update=args.delay_alpha_update, 
                          lr_schedule_end=args.lr_schedule_end,
+                         lr_schedule_steps=args.lr_schedule_steps,
+                         lr_schedule_begin=args.lr_schedule_begin,
                          reweight_type=args.reweight_type,)
     elif args.alg == 'dpmdv2':
         import math
@@ -158,6 +162,8 @@ if __name__ == "__main__":
                            alpha_lr=args.alpha_lr, 
                            delay_alpha_update=args.delay_alpha_update, 
                            lr_schedule_end=args.lr_schedule_end,
+                           lr_schedule_steps=args.lr_schedule_steps,
+                           lr_schedule_begin=args.lr_schedule_begin,
                            learnable_alpha=args.learnable_alpha,
                            kl_constraint=args.kl_constraint,
                            update_additive_noise_scale=args.update_additive_noise_scale,

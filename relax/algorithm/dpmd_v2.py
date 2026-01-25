@@ -154,6 +154,8 @@ class DPMDV2(Algorithm):
         lr: float = 1e-4,
         alpha_lr: float = 3e-2,
         lr_schedule_end: float = 5e-5,
+        lr_schedule_steps: int = int(5e4),
+        lr_schedule_begin: int = int(2.5e4),
         tau: float = 0.005,
         delay_alpha_update: int = 250,
         delay_update: int = 2,
@@ -172,6 +174,7 @@ class DPMDV2(Algorithm):
         clipped_lower_bound: float = -0.1,
         negative_weights_regularization: float = 0.0,
         noise_scale_lr: float = 7e-3,
+        add_state_level_reweighting: bool = False,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -183,8 +186,8 @@ class DPMDV2(Algorithm):
         lr_schedule = optax.schedules.linear_schedule(
             init_value=lr,
             end_value=lr_schedule_end,
-            transition_steps=int(5e4),
-            transition_begin=int(2.5e4),
+            transition_steps=lr_schedule_steps,
+            transition_begin=lr_schedule_begin,
         )
         self.policy_optim = optax.adam(learning_rate=lr_schedule)
         self.alpha_optim = optax.adam(alpha_lr)
@@ -217,7 +220,7 @@ class DPMDV2(Algorithm):
         self.use_ema = use_ema
         self.clipped_lower_bound = clipped_lower_bound
         self.negative_weights_regularization = negative_weights_regularization
-        
+        self.add_state_level_reweighting = add_state_level_reweighting
         @jax.jit
         def stateless_update(
             key: jax.Array, state: Diffv2TrainState, data: Experience
@@ -461,11 +464,17 @@ class DPMDV2(Algorithm):
                     act_best_of_n = jnp.take_along_axis(batch_action, q_best_ind[..., None], axis=0).squeeze(axis=0)
                     scaled_q = (q_batch_action - running_mean) / (running_std + 1e-6)
                     q_mean = jnp.mean(q_best_ind.squeeze(axis=0))
-                    q_std = jnp.std(q_best_ind.squeeze(axis=0))
-                    
-                    
+                    q_std = jnp.std(q_best_ind.squeeze(axis=0))                    
                 else:
                     raise NotImplementedError(f"Reweight type {self.reweight_type} is not implemented.")
+
+                if self.add_state_level_reweighting:
+                    q_best_ind = jnp.argmax(q_batch_action, axis=0, keepdims=True) # [1, B]
+                    q_rela = (q_best_ind - running_mean) / (running_std + 1e-6)
+                    q_rela = q_rela.clip(-3, 3) / (jnp.exp(log_noise_scale) * 10.0) # fully reproduce dacer implementation
+                    state_weights = jnp.exp(q_rela)
+                    q_weights = q_weights * state_weights
+
                 def denoiser(t, x):
                     return self.agent.policy(policy_params, obs, x, t)
                 if self.agent.use_flow:
@@ -544,7 +553,7 @@ class DPMDV2(Algorithm):
                     alpha_variable = jnp.maximum(alpha_variable, softplus_inv(self.min_alpha))  # ensure alpha_variable is not too small
                 elif self.alpha_transformation == 'exp':
                     alpha_variable = jnp.maximum(alpha_variable, jnp.log(self.min_alpha))  # ensure alpha_variable is not too small
-                elif self.alpha_transformation == 'None':
+                elif self.alpha_transformation == 'identity':
                     alpha_variable = jnp.maximum(alpha_variable, self.min_alpha)  # ensure alpha_variable is not too small
                 else:
                     raise NotImplementedError(f"Alpha transformation {self.alpha_transformation} is not implemented.")
