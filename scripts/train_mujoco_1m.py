@@ -52,7 +52,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr_schedule_end", type=float, default=3e-5)
     parser.add_argument("--lr_schedule_steps", type=int, default=int(5e5))
     parser.add_argument("--lr_schedule_begin", type=int, default=int(2.5e5))
-    parser.add_argument("--alpha_lr", type=float, default=7e-3)
+    parser.add_argument("--alpha_lr", type=float, default=3e-4)
     parser.add_argument("--delay_alpha_update", type=float, default=1250)
     parser.add_argument("--delay_log_noise_scale_update", type=float, default=1250)
     parser.add_argument("--seed", type=int, default=100)
@@ -160,14 +160,12 @@ if __name__ == "__main__":
                                           initial_log_noise_scale=math.log(args.initial_noise_scale))
         algorithm = DPMDV2(agent, params, lr=args.lr, 
                            alpha_lr=args.alpha_lr, 
-                           delay_alpha_update=args.delay_alpha_update, 
                            lr_schedule_end=args.lr_schedule_end,
                            lr_schedule_steps=args.lr_schedule_steps,
                            lr_schedule_begin=args.lr_schedule_begin,
                            learnable_alpha=args.learnable_alpha,
                            kl_constraint=args.kl_constraint,
                            update_additive_noise_scale=args.update_additive_noise_scale,
-                           alpha_transformation=args.alpha_transformation,
                            reweight_type=args.reweight_type,
                            delay_log_noise_scale_update=args.delay_log_noise_scale_update,
                            clipped_lower_bound=args.clip_lower_bound,
