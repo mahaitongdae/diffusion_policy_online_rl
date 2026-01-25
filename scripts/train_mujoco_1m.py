@@ -61,7 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("--noise_scale", type=float, default=0.1)
     parser.add_argument("--initial_noise_scale", type=float, default=0.5)
     parser.add_argument("--cluster", default=False, action="store_true")
-    parser.add_argument("--save_to_shared_folder", default=True, action="store_true")
+    parser.add_argument("--save_to_shared_folder", default=False, action="store_true")
     parser.add_argument("--debug", action='store_true', default=False)
     parser.add_argument("--beta_schedule_scale", type=float, default=1.0)
     parser.add_argument("--beta_schedule_type", type=str, default='linear')
