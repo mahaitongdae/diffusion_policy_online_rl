@@ -281,6 +281,7 @@ class DPMDV2(Algorithm):
                     "strictly_normalized_relu_linear",
                     "strictly_normalized_relu_square",
                     "strictly_normalized_logsumexp",
+                    "negative_strictly_normalized_logsumexp",
                 }, "Unchecked reweight type"
 
                 if self.reweight_type == 'normalized_relu_linear':
@@ -571,6 +572,10 @@ class DPMDV2(Algorithm):
                 running_mean=new_running_mean,
                 running_std=new_running_std
             )
+            
+            positive_q_weights_count = jnp.where(q_weights > 0, jnp.ones_like(q_weights), jnp.zeros_like(q_weights)).sum(axis=0)
+            negative_q_weights_count = jnp.where(q_weights < 0, jnp.ones_like(q_weights), jnp.zeros_like(q_weights)).sum(axis=0)
+            
             info = {
                 "q1_loss": q1_loss,
                 "q1_mean": jnp.mean(q1),
@@ -584,6 +589,10 @@ class DPMDV2(Algorithm):
                 "q_weights_min_mean": jnp.min(q_weights, axis=0).mean(),
                 "q_weights_max_mean": jnp.max(q_weights, axis=0).mean(),
                 "q_weights_std_mean": jnp.std(q_weights, axis=0).mean(),
+                "positive_q_weights_count_mean": jnp.mean(positive_q_weights_count),
+                "positive_q_weights_count_std": jnp.std(positive_q_weights_count),
+                "negative_q_weights_count_mean": jnp.mean(positive_q_weights_count),
+                "negative_q_weights_count_mean": jnp.std(positive_q_weights_count),
                 "scale_q_mean": jnp.mean(scaled_q),
                 "scale_q_std": jnp.std(scaled_q, axis=0).mean(),
                 "scale_q_gap_mean": (jnp.max(scaled_q, axis=0) - jnp.min(scaled_q, axis=0)).mean(),
