@@ -72,12 +72,13 @@ if __name__ == "__main__":
     parser.add_argument("--reweight_type", type=str, default='logsumexp')  # 'exp', 'none'
     parser.add_argument("--alpha_transformation", type=str, default="identity") # 'None', 'softplus', 'exp'
     parser.add_argument("--wandb_group", type=str, default="debug")
-    parser.add_argument("--clip_lower_bound", type=float, default=-0.1)
+    parser.add_argument("--clip_lower_bound", type=float, default=0.0)
     parser.add_argument("--eval_env", type=str, default='None')
     parser.add_argument("--negative_weights_regularization", type=float, default=0.0)
     parser.add_argument("--target_noise_scale", type=float, default=0.1)
     parser.add_argument("--noise_scale_lr", type=float, default=7e-3)
     parser.add_argument("--add_state_level_reweighting", default=False, action='store_true')
+    parser.add_argument("--wandb_project_name", type=str, default="diffusion_online_rl")
     args = parser.parse_args()
 
     if args.debug:
@@ -260,7 +261,8 @@ if __name__ == "__main__":
         log_path=exp_dir,
         update_log_n_step=1 if args.debug else 1000,
         hparams=args_dict,
-        wandb_group=args.wandb_group
+        wandb_group=args.wandb_group,
+        wandb_project_name=args.wandb_project_name
     )
 
     trainer.setup(Experience.create_example(obs_dim, act_dim, trainer.batch_size))

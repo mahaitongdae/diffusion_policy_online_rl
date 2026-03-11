@@ -44,6 +44,7 @@ class OffPolicyTrainer:
         policy_pkl_template: str = "policy-{sample_step}-{update_step}.pkl",
         warmup_with: str = "random",  # "policy" or "random"
         wandb_group: str = "None",
+        wandb_project_name: str = "diffusion_online_rl",
     ):
         self.env = env
         self.algorithm = algorithm
@@ -83,7 +84,7 @@ class OffPolicyTrainer:
         self.sample_log_interval = Interval(self.sample_log_n_episode)
         self.save_policy_interval = Interval(self.save_policy_every)
         # self.eval_interval = Interval()
-        wandb.init(project="diffusion_online_rl",
+        wandb.init(project=wandb_project_name,
                    name=log_path.name,
                    dir=log_path,
                    group=wandb_group,

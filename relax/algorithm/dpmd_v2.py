@@ -169,7 +169,7 @@ class DPMDV2(Algorithm):
         target_noise_scale: float = 0.1,
         use_analytical_alpha_grad: bool = True,
         delay_log_noise_scale_update: int = 250,
-        clipped_lower_bound: float = -0.1,
+        clipped_lower_bound: float = 0.0,
         negative_weights_regularization: float = 0.0,
         noise_scale_lr: float = 7e-3,
         add_state_level_reweighting: bool = False,
@@ -282,6 +282,7 @@ class DPMDV2(Algorithm):
                     "strictly_normalized_relu_square",
                     "strictly_normalized_logsumexp",
                     "negative_strictly_normalized_logsumexp",
+                    "negative_strictly_normalized_relu_linear",
                 }, "Unchecked reweight type"
 
                 if self.reweight_type == 'normalized_relu_linear':
@@ -305,8 +306,8 @@ class DPMDV2(Algorithm):
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'negative_strictly_normalized_relu_linear':
-                    assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
-                    assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_linear is not compatible with clipped_lower_bound != -jnp.inf"
+                    # assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
+                    # assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_linear is not compatible with clipped_lower_bound != -jnp.inf"
                     # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     normalized_diff = solve_v_batch(q_batch_action.T, alpha, lower_bound=self.clipped_lower_bound).T  # pass in [B, N] and get [B, 1]
@@ -591,8 +592,8 @@ class DPMDV2(Algorithm):
                 "q_weights_std_mean": jnp.std(q_weights, axis=0).mean(),
                 "positive_q_weights_count_mean": jnp.mean(positive_q_weights_count),
                 "positive_q_weights_count_std": jnp.std(positive_q_weights_count),
-                "negative_q_weights_count_mean": jnp.mean(positive_q_weights_count),
-                "negative_q_weights_count_mean": jnp.std(positive_q_weights_count),
+                "negative_q_weights_count_mean": jnp.mean(negative_q_weights_count),
+                "negative_q_weights_count_std": jnp.std(negative_q_weights_count),
                 "scale_q_mean": jnp.mean(scaled_q),
                 "scale_q_std": jnp.std(scaled_q, axis=0).mean(),
                 "scale_q_gap_mean": (jnp.max(scaled_q, axis=0) - jnp.min(scaled_q, axis=0)).mean(),

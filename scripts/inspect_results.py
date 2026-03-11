@@ -41,7 +41,19 @@ def plot_mean(patterns_dict: Dict, env_name, fig_name = None,
 
 
 def load_best_results(pattern, env_name, show_df=False,
-              max_steps=None, verbose=False, logdir=None):
+              max_steps=None, verbose=False, logdir=None,
+              metric='best'):
+    """ load results from logdir and return the result.
+    
+    Args:
+        pattern: regex pattern to match the log directory
+        env_name: environment name
+        show_df: whether to show the dataframe
+        max_steps: maximum number of steps
+        verbose: whether to print verbose output
+        logdir: log directory
+        metric: metric to use, 'best', 'last', or 'last5'
+    """
     if logdir is None:
         package_path = Path(relax.__file__)
         logdir = package_path.parent.parent / 'logs' / env_name
@@ -66,8 +78,15 @@ def load_best_results(pattern, env_name, show_df=False,
         if len(df) > 0:
             if max_steps is not None:
                 df = df[df['step'] < max_steps]
-            sliced_df = df.loc[df['avg_ret'].idxmax()]
-            sliced_df.loc['seed'] = str(dir).split('_s')[1].split('_')[0]
+            if metric == 'best':
+                sliced_df = df.loc[df['avg_ret'].idxmax()]
+            elif metric == 'last':
+                sliced_df = df.iloc[-1]
+            elif metric == 'last5':
+                sliced_df = df.iloc[-5:].mean(axis=0)
+            else:
+                raise ValueError(f"Invalid metric: {metric}")
+            sliced_df.loc['seed'] = str(dir).split('_s1')[1].split('_')[0]
             # if 'lr_end' in dir:
             #     sliced_df.loc['lr_end'] = dir.split('lr_end_')[1]
             dfs.append(sliced_df)
