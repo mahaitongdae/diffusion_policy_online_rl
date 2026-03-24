@@ -148,17 +148,65 @@ class GaussianDiffusion:
         return loss.mean()
 
     def weighted_p_loss(self, key: jax.Array, weights: jax.Array, model: DiffusionModel, t: jax.Array,
-                        x_start: jax.Array, negative_weights_regularization: float = 0.0):
+                        x_start: jax.Array, negative_weights_regularization: float = 0.0, regularization_type: 'str' = 'square',
+                        clipped_only_weighted_mse_lower_bound: float = -1.0,
+                        use_timestep_weight: bool = False):
         if len(weights.shape) == 1:
             weights = weights.reshape(-1, 1)
         assert t.ndim == 1 and t.shape[0] == x_start.shape[0]
         noise = jax.random.normal(key, x_start.shape)
         x_noisy = jax.vmap(self.q_sample)(t, x_start, noise)
         noise_pred = model(t, x_noisy)
-        loss = weights * optax.squared_error(noise_pred, noise)
+        unweighted_loss = optax.squared_error(noise_pred, noise)
+        if use_timestep_weight:
+            B = self.beta_schedule()
+            # Strict timestep weight from diffusion paper: \beta_t^2 / (2 \sigma_t^2 \alpha_t (1-\bar{\alpha}_t))
+            # with \sigma_t^2 = posterior variance
+            sigma_t_sq = B.posterior_variance[t]
+            alpha_t = B.alphas[t]
+            one_minus_bar_alpha_t = 1.0 - B.alphas_cumprod[t]
+            timestep_weight = (B.betas[t] ** 2) / (2.0 * sigma_t_sq * alpha_t * one_minus_bar_alpha_t + 1e-12)
+            unweighted_loss = unweighted_loss * timestep_weight.reshape(-1, 1)
+        weights = weights * jnp.ones_like(unweighted_loss)
         if negative_weights_regularization > 0.0:
-            loss += negative_weights_regularization * jnp.where(weights < 0, noise_pred ** 2, 0)
-        return loss.mean()
+            if regularization_type == 'square':
+                loss = unweighted_loss * weights
+                loss += negative_weights_regularization * jnp.where(weights < 0, noise_pred ** 2, 0)
+            elif regularization_type == 'softmax_with_mse':
+                weighted_loss_mean_over_act = (weights * unweighted_loss).mean(axis=1, keepdims=True) # [N, 1]
+                loss = jnp.where(
+                    weights < 0, 
+                    jax.nn.softmax(weighted_loss_mean_over_act, axis=0) * weighted_loss_mean_over_act, 
+                    weighted_loss_mean_over_act
+                    )
+            elif regularization_type == 'softmax_with_mse_scaled':
+                weighted_loss_mean_over_act = (weights * unweighted_loss).mean(axis=1, keepdims=True) # [N, 1]
+                loss = jnp.where(
+                    weights < 0, 
+                    jax.nn.softmax(weighted_loss_mean_over_act, axis=0) * 32.0 * weighted_loss_mean_over_act, # TODO: hardcoded scale factor
+                    weighted_loss_mean_over_act
+                    )
+            elif regularization_type == 'fpopp_like':
+                # L = MSE capped at 1.0; negative samples: A*L + |A|/2 * L^2
+                L = jnp.clip(unweighted_loss, 0.0, 1.0)
+                loss = jnp.where(weights < 0, weights * L + jnp.abs(weights) / 2.0 * L ** 2, weights * unweighted_loss)
+            elif regularization_type == 'fpopp_like_scaled':
+                # L = MSE capped at 1.0; negative samples: A*L + |A|/2 * L^2
+                L = jnp.clip(unweighted_loss, 0.0, 0.1)
+                loss = jnp.where(weights < 0, weights * L + jnp.abs(weights) / 2.0 * L ** 2, weights * unweighted_loss)
+            elif regularization_type == 'clipped_only':
+                loss = jnp.where(weights < 0, jnp.clip(weights * unweighted_loss, clipped_only_weighted_mse_lower_bound, 0.0), weights * unweighted_loss)
+            else:
+                raise ValueError(f"Regularization type {regularization_type} is not implemented.")
+        else:
+            loss = weights * unweighted_loss
+        pos_mask = (weights >= 0).any(axis=-1)
+        neg_mask = (weights < 0).any(axis=-1)
+        pos_loss = jnp.where(pos_mask, loss.mean(axis=-1), 0.0).sum() / jnp.maximum(pos_mask.sum(), 1)
+        neg_loss = jnp.where(neg_mask, loss.mean(axis=-1), 0.0).sum() / jnp.maximum(neg_mask.sum(), 1)
+        pos_mse = jnp.where(pos_mask, unweighted_loss.mean(axis=-1), 0.0).sum() / jnp.maximum(pos_mask.sum(), 1)
+        neg_mse = jnp.where(neg_mask, unweighted_loss.mean(axis=-1), 0.0).sum() / jnp.maximum(neg_mask.sum(), 1)
+        return loss.mean(), {'pos_loss': pos_loss, 'neg_loss': neg_loss, 'pos_mse': pos_mse, 'neg_mse': neg_mse}
     
     def reverse_samping_weighted_p_loss(self, noise: jax.Array, weights: jax.Array, model: DiffusionModel, t: jax.Array,
                         x_t: jax.Array):

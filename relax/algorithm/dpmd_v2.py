@@ -171,8 +171,13 @@ class DPMDV2(Algorithm):
         delay_log_noise_scale_update: int = 250,
         clipped_lower_bound: float = 0.0,
         negative_weights_regularization: float = 0.0,
+        regularization_type: str = 'square',
+        clipped_only_weighted_mse_lower_bound: float = -1.0,
+        use_timestep_weight: bool = False,
         noise_scale_lr: float = 7e-3,
         add_state_level_reweighting: bool = False,
+        bellman_next_action_use_target_policy: bool = False,
+        policy_batch_action_use_target_policy: bool = True,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -216,7 +221,12 @@ class DPMDV2(Algorithm):
         self.use_ema = use_ema
         self.clipped_lower_bound = clipped_lower_bound
         self.negative_weights_regularization = negative_weights_regularization
+        self.regularization_type = regularization_type
+        self.clipped_only_weighted_mse_lower_bound = clipped_only_weighted_mse_lower_bound
+        self.use_timestep_weight = use_timestep_weight
         self.add_state_level_reweighting = add_state_level_reweighting
+        self.bellman_next_action_use_target_policy = bellman_next_action_use_target_policy
+        self.policy_batch_action_use_target_policy = policy_batch_action_use_target_policy
         @jax.jit
         def stateless_update(
             key: jax.Array, state: Diffv2TrainState, data: Experience
@@ -252,7 +262,12 @@ class DPMDV2(Algorithm):
             #     q = jnp.minimum(q1, q2)
             #     return q
 
-            next_action = self.agent.get_action(next_eval_key, (policy_params, -jnp.inf, q1_params, q2_params), next_obs)  # no random noise added in PEV
+            pev_policy_params = (
+                target_policy_params
+                if self.bellman_next_action_use_target_policy
+                else policy_params
+            )
+            next_action = self.agent.get_action(next_eval_key, (pev_policy_params, -jnp.inf, q1_params, q2_params), next_obs)  # no random noise added in PEV
             q1_target = self.agent.q(target_q1_params, next_obs, next_action)
             q2_target = self.agent.q(target_q2_params, next_obs, next_action)
             q_target = jnp.minimum(q1_target, q2_target)
@@ -270,8 +285,13 @@ class DPMDV2(Algorithm):
             q1_params = optax.apply_updates(q1_params, q1_update)
             q2_params = optax.apply_updates(q2_params, q2_update)
             
+            batch_policy_params = (
+                target_policy_params
+                if self.policy_batch_action_use_target_policy
+                else policy_params
+            )
             batch_action, q_batch_action = self.agent.get_batch_action_with_q(
-                new_eval_key, (target_policy_params, log_noise_scale, target_q1_params, target_q2_params), obs
+                new_eval_key, (batch_policy_params, log_noise_scale, target_q1_params, target_q2_params), obs
                 )  # [N, B, A], [N, B]
 
 
@@ -476,15 +496,19 @@ class DPMDV2(Algorithm):
                     self.agent.diffusion.weighted_p_loss, 
                     key=diffusion_noise_key, 
                     model=denoiser, 
-                    negative_weights_regularization=self.negative_weights_regularization)
-                loss = jax.vmap(loss_fn)(
+                    negative_weights_regularization=self.negative_weights_regularization,
+                    regularization_type=self.regularization_type,
+                    clipped_only_weighted_mse_lower_bound=self.clipped_only_weighted_mse_lower_bound,
+                    use_timestep_weight=self.use_timestep_weight)
+                loss, loss_info = jax.vmap(loss_fn)(
                     weights=jax.lax.stop_gradient(q_weights), 
                     t=t, 
                     x_start=jax.lax.stop_gradient(batch_action))
+                loss_info = jax.tree.map(jnp.mean, loss_info)
                 loss = jnp.mean(loss)
-                return loss, (q_weights, scaled_q, q_mean, q_std, entropy)
+                return loss, (q_weights, scaled_q, q_mean, q_std, entropy, loss_info)
 
-            (total_loss, (q_weights, scaled_q, q_mean, q_std, entropy)), policy_grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(policy_params)
+            (total_loss, (q_weights, scaled_q, q_mean, q_std, entropy, loss_info)), policy_grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(policy_params)
 
 
             def alpha_loss_fn(alpha_variable: jax.Array) -> jax.Array:
@@ -615,6 +639,10 @@ class DPMDV2(Algorithm):
                 "reweighted_entropy_max": entropy.max(),
                 "reweighted_entropy_min": entropy.min(),
                 "reweighted_entropy_std": entropy.std(),
+                "pos_loss": loss_info['pos_loss'],
+                "neg_loss": loss_info['neg_loss'],
+                "pos_unweighted_loss": loss_info['pos_mse'],
+                "neg_unweighted_loss": loss_info['neg_mse'],
             }
             return state, info
 

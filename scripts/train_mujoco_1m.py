@@ -75,10 +75,27 @@ if __name__ == "__main__":
     parser.add_argument("--clip_lower_bound", type=float, default=0.0)
     parser.add_argument("--eval_env", type=str, default='None')
     parser.add_argument("--negative_weights_regularization", type=float, default=0.0)
+    parser.add_argument("--regularization_type", type=str, default='square')
+    parser.add_argument("--clipped_only_weighted_mse_lower_bound", type=float, default=-1.0)
     parser.add_argument("--target_noise_scale", type=float, default=0.1)
     parser.add_argument("--noise_scale_lr", type=float, default=7e-3)
     parser.add_argument("--add_state_level_reweighting", default=False, action='store_true')
-    parser.add_argument("--wandb_project_name", type=str, default="diffusion_online_rl")
+    parser.add_argument("--use_timestep_weight", default=False, action='store_true')
+    parser.add_argument(
+        "--bellman_next_action_policy",
+        type=str,
+        default="online",
+        choices=("online", "target"),
+        help="Which policy params to use for next-action sampling in the Bellman target (PEV): online or slow target.",
+    )
+    parser.add_argument(
+        "--batch_action_policy",
+        type=str,
+        default="target",
+        choices=("online", "target"),
+        help="Which policy params to use for get_batch_action_with_q reweighting samples: online or slow target.",
+    )
+    parser.add_argument("--wandb_project_name", type=str, default="diffusion_online_rl_negative")
     args = parser.parse_args()
 
     if args.debug:
@@ -171,9 +188,18 @@ if __name__ == "__main__":
                            delay_log_noise_scale_update=args.delay_log_noise_scale_update,
                            clipped_lower_bound=args.clip_lower_bound,
                            negative_weights_regularization=args.negative_weights_regularization,
+                           regularization_type=args.regularization_type,
+                           clipped_only_weighted_mse_lower_bound=args.clipped_only_weighted_mse_lower_bound,
+                           use_timestep_weight=args.use_timestep_weight,
                            target_noise_scale=args.target_noise_scale,
                            noise_scale_lr=args.noise_scale_lr,
-                           add_state_level_reweighting=args.add_state_level_reweighting)
+                           add_state_level_reweighting=args.add_state_level_reweighting,
+                           bellman_next_action_use_target_policy=(
+                               args.bellman_next_action_policy == "target"
+                           ),
+                           policy_batch_action_use_target_policy=(
+                               args.batch_action_policy == "target"
+                           ))
     elif args.alg == 'idem':
         def mish(x: jax.Array):
             return x * jnp.tanh(jax.nn.softplus(x))

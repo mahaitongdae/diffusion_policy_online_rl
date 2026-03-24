@@ -25,3 +25,5 @@ multirun/
 wandb/
 .DS_Store
 **logs**.txt
+.swp
+**.txt
