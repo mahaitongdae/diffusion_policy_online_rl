@@ -16,7 +16,7 @@ accepted by ICML 2025.
 
 ```bash
 # Create environment
-conda create -n relax python=3.9 numpy tqdm tensorboardX matplotlib scikit-learn black snakeviz ipykernel setproctitle numba
+conda create -n relax python=3.10 numpy tqdm tensorboardX matplotlib scikit-learn black snakeviz ipykernel setproctitle numba
 conda activate relax
 
 # One of: Install jax WITH CUDA 

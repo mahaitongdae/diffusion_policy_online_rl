@@ -17,7 +17,7 @@ class DPMDv2OptStates(NamedTuple):
     q1: optax.OptState
     q2: optax.OptState
     policy: optax.OptState
-    alpha_variable: optax.OptState
+    log_alpha: optax.OptState
     log_noise_scale: optax.OptState
 
 
@@ -150,33 +150,35 @@ class DPMDV2(Algorithm):
         agent: Diffv4Net,
         params: Diffv4Params,
         *,
+        # general
         gamma: float = 0.99,
-        lr: float = 1e-4,
-        alpha_lr: float = 3e-2,
-        lr_schedule_end: float = 5e-5,
-        lr_schedule_steps: int = int(5e4),
-        lr_schedule_begin: int = int(2.5e4),
         tau: float = 0.005,
         delay_update: int = 2,
         reward_scale: float = 0.2,
         use_ema: bool = True,
-        reweight_type: str = 'logsumexp',  # 'exp', 'square'
+        # learning rate
+        lr: float = 3e-4,
+        lr_schedule_end: float = 3e-5,
+        lr_schedule_steps: int = int(5e5),
+        lr_schedule_begin: int = int(2.5e5),
+        # alpha
         learnable_alpha: bool = True,
-        kl_constraint: float = 0.1,
-        min_alpha: float = 1e-6,
-        update_additive_noise_scale: bool = True,
-        initial_noise_scale: float = 0.5,
-        target_noise_scale: float = 0.1,
-        use_analytical_alpha_grad: bool = True,
+        alpha_lr: float = 3e-4,
+        kl_constraint: float = 1.0,
+        # noise scale
+        learnable_noise_scale: bool = True,
         delay_log_noise_scale_update: int = 250,
+        noise_scale_lr: float = 7e-3,
+        target_noise_scale: float = 0.1,
+        # reweighting
+        reweight_type: str = 'logsumexp',  # 'exp', 'square'
         clipped_lower_bound: float = 0.0,
         negative_weights_regularization: float = 0.0,
         regularization_type: str = 'square',
         clipped_only_weighted_mse_lower_bound: float = -1.0,
         use_timestep_weight: bool = False,
-        noise_scale_lr: float = 7e-3,
         add_state_level_reweighting: bool = False,
-        bellman_next_action_use_target_policy: bool = False,
+        bellman_next_action_use_target_policy: bool = True,
         policy_batch_action_use_target_policy: bool = True,
     ):
         self.agent = agent
@@ -194,23 +196,19 @@ class DPMDV2(Algorithm):
         self.policy_optim = optax.adam(learning_rate=lr_schedule)
         self.alpha_optim = optax.adam(alpha_lr)
         self.noise_optim = optax.adam(learning_rate=noise_scale_lr)
-        self.entropy = 0.0
         self.reweight_type = reweight_type
         self.learnable_alpha = learnable_alpha
         self.kl_constraint = kl_constraint
-        self.min_alpha = min_alpha
         self.target_noise_scale = target_noise_scale
-        self.update_additive_noise_scale = update_additive_noise_scale
-        self.use_analytical_alpha_grad = use_analytical_alpha_grad
+        self.learnable_noise_scale = learnable_noise_scale
         self.delay_log_noise_scale_update = delay_log_noise_scale_update
         self.state = Diffv2TrainState(
             params=params,
             opt_state=DPMDv2OptStates(
                 q1=self.optim.init(params.q1),
                 q2=self.optim.init(params.q2),
-                # policy=self.optim.init(params.policy),
                 policy=self.policy_optim.init(params.policy),
-                alpha_variable=self.alpha_optim.init(params.alpha_variable),
+                log_alpha=self.alpha_optim.init(params.log_alpha),
                 log_noise_scale=self.noise_optim.init(params.log_noise_scale),
             ),
             step=jnp.int32(0),
@@ -227,47 +225,31 @@ class DPMDV2(Algorithm):
         self.add_state_level_reweighting = add_state_level_reweighting
         self.bellman_next_action_use_target_policy = bellman_next_action_use_target_policy
         self.policy_batch_action_use_target_policy = policy_batch_action_use_target_policy
+
+        
         @jax.jit
         def stateless_update(
             key: jax.Array, state: Diffv2TrainState, data: Experience
         ) -> Tuple[DPMDv2OptStates, Metric]:
             obs, action, reward, next_obs, done = data.obs, data.action, data.reward, data.next_obs, data.done
-            q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, alpha_variable, log_noise_scale = state.params
-            q1_opt_state, q2_opt_state, policy_opt_state, alpha_opt_state, log_noise_scale_opt_state = state.opt_state
+            q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, log_alpha, log_noise_scale = state.params
+            q1_opt_state, q2_opt_state, policy_opt_state, log_alpha_opt_state, log_noise_scale_opt_state = state.opt_state
             step = state.step
             running_mean = state.running_mean
             running_std = state.running_std
             next_eval_key, new_eval_key, diffusion_time_key, diffusion_noise_key = jax.random.split(
                 key, 4)
 
-            if self.learnable_alpha:
-                self.alpha_transformation = "exp"
-                alpha_transform_fn = jnp.exp
-            else:
-                self.alpha_transformation = "identity"
-                alpha_transform_fn = lambda x: x
-            alpha = alpha_transform_fn(alpha_variable)
+            alpha = jnp.exp(log_alpha)
 
             reward *= self.reward_scale
-
-            # def get_min_q(s, a):
-            #     q1 = self.agent.q(q1_params, s, a)
-            #     q2 = self.agent.q(q2_params, s, a)
-            #     q = jnp.minimum(q1, q2)
-            #     return q
-
-            # def get_min_taret_q(s, a):
-            #     q1 = self.agent.q(target_q1_params, s, a)
-            #     q2 = self.agent.q(target_q2_params, s, a)
-            #     q = jnp.minimum(q1, q2)
-            #     return q
 
             pev_policy_params = (
                 target_policy_params
                 if self.bellman_next_action_use_target_policy
                 else policy_params
             )
-            next_action = self.agent.get_action(next_eval_key, (pev_policy_params, -jnp.inf, q1_params, q2_params), next_obs)  # no random noise added in PEV
+            next_action = self.agent.get_action(next_eval_key, (pev_policy_params, -jnp.inf, target_q1_params, target_q2_params), next_obs)  # no random noise added in PEV
             q1_target = self.agent.q(target_q1_params, next_obs, next_action)
             q2_target = self.agent.q(target_q2_params, next_obs, next_action)
             q_target = jnp.minimum(q1_target, q2_target)
@@ -275,15 +257,11 @@ class DPMDV2(Algorithm):
 
             def q_loss_fn(q_params: hk.Params) -> jax.Array:
                 q = self.agent.q(q_params, obs, action)
-                q_loss = jnp.mean((q - q_backup) ** 2)
+                q_loss = jnp.mean((q - jax.lax.stop_gradient(q_backup)) ** 2)
                 return q_loss, q
 
             (q1_loss, q1), q1_grads = jax.value_and_grad(q_loss_fn, has_aux=True)(q1_params)
             (q2_loss, q2), q2_grads = jax.value_and_grad(q_loss_fn, has_aux=True)(q2_params)
-            q1_update, q1_opt_state = self.optim.update(q1_grads, q1_opt_state)
-            q2_update, q2_opt_state = self.optim.update(q2_grads, q2_opt_state)
-            q1_params = optax.apply_updates(q1_params, q1_update)
-            q2_params = optax.apply_updates(q2_params, q2_update)
             
             batch_policy_params = (
                 target_policy_params
@@ -307,7 +285,6 @@ class DPMDV2(Algorithm):
 
                 if self.reweight_type == 'normalized_relu_linear':
                     assert not self.learnable_alpha, "normalized_relu_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action + alpha - batch_q_mean) / (batch_q_std + 1e-6)
@@ -326,14 +303,10 @@ class DPMDV2(Algorithm):
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'negative_strictly_normalized_relu_linear':
-                    # assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
-                    # assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_linear is not compatible with clipped_lower_bound != -jnp.inf"
-                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_linear is not compatible with alpha_transformation != identity"
-                    # q_min = get_min_q(next_obs, next_action)
                     normalized_diff = solve_v_batch(q_batch_action.T, alpha, lower_bound=self.clipped_lower_bound).T  # pass in [B, N] and get [B, 1]
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action - normalized_diff) / alpha
-                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
+                    q_weights = jnp.clip(q_normalized, self.clipped_lower_bound, jnp.inf)
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
@@ -341,7 +314,6 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_relu_square':
                     assert not self.learnable_alpha, "normalized_relu_square is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_relu_square is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action + alpha - batch_q_mean) / (batch_q_std + 1e-6)
@@ -362,7 +334,6 @@ class DPMDV2(Algorithm):
                 elif self.reweight_type == 'negative_strictly_normalized_relu_square':
                     assert not self.learnable_alpha, "strictly_normalized_relu_square is not compatible with learnable_alpha"
                     assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_square is not compatible with clipped_lower_bound != -jnp.inf"
-                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_square is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     normalized_diff = solve_v_squared_batch(q_batch_action.T, alpha, lower_bound=self.clipped_lower_bound).T  # pass in [B, N] and get [B, 1]
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
@@ -375,7 +346,6 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'normalized_leaky_relu_linear':
                     assert not self.learnable_alpha, "normalized_leaky_relu_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_leaky_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
@@ -387,7 +357,6 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(entropy_weights / entropy_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'normalized_sigmoid_linear':
                     # assert not self.learnable_alpha, "normalized_sigmoid_linear is not compatible with learnable_alpha"
-                    # assert self.alpha_transformation == 'identity', "normalized_sigmoid_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action - batch_q_mean) / (batch_q_std + 1e-6)
@@ -401,7 +370,6 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'normalized_elu_linear':
                     assert not self.learnable_alpha, "normalized_elu_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_elu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
@@ -413,7 +381,6 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(entropy_weights / entropy_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'normalized_tanh_linear':
                     assert not self.learnable_alpha, "normalized_tanh_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_tanh_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
@@ -425,7 +392,6 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(entropy_weights / entropy_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'normalized_clipped_linear':
                     assert not self.learnable_alpha, "normalized_leaky_relu_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_leaky_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
@@ -437,7 +403,6 @@ class DPMDV2(Algorithm):
                     entropy = jax.scipy.special.entr(entropy_weights / entropy_weights.sum(axis=0, keepdims=True)).sum(axis=0) # q_batch_action [N, B]
                 elif self.reweight_type == 'normalized_clipped_square':
                     assert not self.learnable_alpha, "normalized_leaky_relu_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_leaky_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action  + alpha - batch_q_mean) / (batch_q_std + 1e-6)
@@ -491,18 +456,20 @@ class DPMDV2(Algorithm):
                     t = jax.random.uniform(diffusion_time_key, (self.agent.num_particles, obs.shape[0],))
                 else:
                     t = jax.random.randint(diffusion_time_key, (self.agent.num_particles, obs.shape[0],), 0, self.agent.num_timesteps)
+                diffusion_noise_keys = jax.random.split(diffusion_noise_key, self.agent.num_particles)
                     
                 loss_fn = partial(
                     self.agent.diffusion.weighted_p_loss, 
-                    key=diffusion_noise_key, 
+                    # key=diffusion_noise_key, 
                     model=denoiser, 
                     negative_weights_regularization=self.negative_weights_regularization,
                     regularization_type=self.regularization_type,
                     clipped_only_weighted_mse_lower_bound=self.clipped_only_weighted_mse_lower_bound,
                     use_timestep_weight=self.use_timestep_weight)
                 loss, loss_info = jax.vmap(loss_fn)(
+                    key=diffusion_noise_keys, 
                     weights=jax.lax.stop_gradient(q_weights), 
-                    t=t, 
+                    t=jax.lax.stop_gradient(t), 
                     x_start=jax.lax.stop_gradient(batch_action))
                 loss_info = jax.tree.map(jnp.mean, loss_info)
                 loss = jnp.mean(loss)
@@ -511,13 +478,12 @@ class DPMDV2(Algorithm):
             (total_loss, (q_weights, scaled_q, q_mean, q_std, entropy, loss_info)), policy_grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(policy_params)
 
 
-            def alpha_loss_fn(alpha_variable: jax.Array) -> jax.Array:
-                alpha = alpha_transform_fn(alpha_variable)
-                alpha_loss = alpha * (self.kl_constraint + entropy.mean() - jnp.log(self.agent.num_particles))
+            def alpha_loss_fn(log_alpha: jax.Array) -> jax.Array:
+                alpha_value = jnp.exp(log_alpha)
+                alpha_loss = alpha_value * (self.kl_constraint + entropy.mean() - jnp.log(self.agent.num_particles))
                 return alpha_loss.mean()
                 
-            alpha_grad, alpha_loss = jax.value_and_grad(alpha_loss_fn)(alpha_variable)
-
+            alpha_loss, alpha_grad = jax.value_and_grad(alpha_loss_fn)(log_alpha)
 
             # update networks
             def param_update(optim, params, grads, opt_state):
@@ -532,8 +498,6 @@ class DPMDV2(Algorithm):
                     lambda params, opt_state: (params, opt_state),
                     params, opt_state
                 )
-
-
             def delay_target_update(params, target_params, tau):
                 return jax.lax.cond(
                     step % self.delay_update == 0,
@@ -546,30 +510,19 @@ class DPMDV2(Algorithm):
             q2_params, q2_opt_state = param_update(self.optim, q2_params, q2_grads, q2_opt_state)
             policy_params, policy_opt_state = delay_param_update(self.policy_optim, policy_params, policy_grads, policy_opt_state)
             if self.learnable_alpha:
-                alpha_variable, alpha_opt_state = param_update(self.alpha_optim, alpha_variable, alpha_grad, alpha_opt_state)
-                if self.alpha_transformation == 'softplus':
-                    alpha_variable = jnp.maximum(alpha_variable, softplus_inv(self.min_alpha))  # ensure alpha_variable is not too small
-                elif self.alpha_transformation == 'exp':
-                    alpha_variable = jnp.maximum(alpha_variable, jnp.log(self.min_alpha))  # ensure alpha_variable is not too small
-                elif self.alpha_transformation == 'identity':
-                    alpha_variable = jnp.maximum(alpha_variable, self.min_alpha)  # ensure alpha_variable is not too small
-                else:
-                    raise NotImplementedError(f"Alpha transformation {self.alpha_transformation} is not implemented.")
-            else:
-                pass
+                log_alpha, log_alpha_opt_state = param_update(self.alpha_optim, log_alpha, alpha_grad, log_alpha_opt_state)
 
-            if self.update_additive_noise_scale:
+            if self.learnable_noise_scale:
                 def noise_scale_loss_fn(log_noise_scale: jax.Array) -> jax.Array:
-                    return jnp.exp(log_noise_scale) - self.target_noise_scale
+                    return jnp.exp(log_noise_scale)
                 
-                noise_scale_grad, noise_scale_loss = jax.value_and_grad(noise_scale_loss_fn)(log_noise_scale)
+                noise_scale_loss, noise_scale_grad = jax.value_and_grad(noise_scale_loss_fn)(log_noise_scale)
                 log_noise_scale, log_noise_scale_opt_state = jax.lax.cond(
                     step % self.delay_log_noise_scale_update == 0,
                     lambda params, opt_state: param_update(self.noise_optim, params, noise_scale_grad, opt_state),
                     lambda params, opt_state: (params, opt_state),
                     log_noise_scale, log_noise_scale_opt_state
                 )
-            
             else:
                 log_noise_scale = jnp.log(self.target_noise_scale)
                 log_noise_scale_opt_state = log_noise_scale_opt_state
@@ -584,12 +537,12 @@ class DPMDV2(Algorithm):
             new_running_std = running_std + 0.001 * (q_std - running_std)
 
             state = Diffv2TrainState(
-                params=Diffv4Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, alpha_variable, log_noise_scale),
+                params=Diffv4Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, log_alpha, log_noise_scale),
                 opt_state=DPMDv2OptStates(
                     q1=q1_opt_state, 
                     q2=q2_opt_state, 
                     policy=policy_opt_state, 
-                    alpha_variable=alpha_opt_state, 
+                    log_alpha=log_alpha_opt_state, 
                     log_noise_scale=log_noise_scale_opt_state
                     ),
                 step=step + 1,
@@ -623,15 +576,11 @@ class DPMDV2(Algorithm):
                 "scale_q_gap_mean": (jnp.max(scaled_q, axis=0) - jnp.min(scaled_q, axis=0)).mean(),
                 "running_q_mean": new_running_mean,
                 "running_q_std": new_running_std,
-                # "approx_kl": jnp.mean(q_weights * (scaled_q - Z)),
                 "kl_constraint": self.kl_constraint,
                 "sample_action_std": jnp.std(batch_action, axis=0).mean(),
-                
-                # "normalization_factor": Z.squeeze(axis=0).mean(),
                 "noise_scale_loss": noise_scale_loss,
                 "noise_scale": jnp.exp(log_noise_scale),
-                "alpha_variable": alpha_variable,
-                "alpha": alpha,
+                "alpha": jnp.exp(log_alpha),
                 "alpha_loss": alpha_loss,
                 "alpha_grad": alpha_grad,
                 "analytical_alpha_grad": (self.kl_constraint + entropy - jnp.log(self.agent.num_particles)).mean(),
@@ -652,7 +601,7 @@ class DPMDV2(Algorithm):
         return (self.state.params.policy, self.state.params.log_noise_scale, self.state.params.q1, self.state.params.q2 )
 
     def get_policy_params_to_save(self):
-        return (self.state.params.target_poicy, self.state.params.log_noise_scale, self.state.params.q1, self.state.params.q2)
+        return (self.state.params.target_policy, self.state.params.log_noise_scale, self.state.params.q1, self.state.params.q2)
 
     def save_policy(self, path: str) -> None:
         policy = jax.device_get(self.get_policy_params_to_save())

@@ -94,8 +94,8 @@ class BetaScheduleCoefficients:
 @dataclass(frozen=True)
 class GaussianDiffusion:
     num_timesteps: int
-    beta_schedule_scale: float = 0.3
-    beta_schedule_type: str = 'linear'
+    beta_schedule_scale: float = 1.0
+    beta_schedule_type: str = 'cosine'
 
     def beta_schedule(self):
         with jax.ensure_compile_time_eval():
@@ -119,8 +119,9 @@ class GaussianDiffusion:
         return x_recon
 
     def p_sample(self, key: jax.Array, model: DiffusionModel, shape: Tuple[int, ...]) -> jax.Array:
+        B = self.beta_schedule()
         x_key, noise_key = jax.random.split(key)
-        x = 0.5 * jax.random.normal(x_key, shape)
+        x = jnp.sqrt(1.0 - B.alphas_cumprod[-1]) * jax.random.normal(x_key, shape)
         noise = jax.random.normal(noise_key, (self.num_timesteps, *shape))
 
         def body_fn(x, input):
@@ -220,7 +221,7 @@ class GaussianDiffusion:
 
 if __name__ == '__main__':
     diffusion = GaussianDiffusion(20)
-    beta_schedule = diffusion.beta_schedule(scale=0.3)
+    beta_schedule = diffusion.beta_schedule()
     print("betas", beta_schedule.betas)
     print("sqrt 1 - bar alpha", beta_schedule.sqrt_one_minus_alphas_cumprod)
     print("sqrt 1 over bar alpha", beta_schedule.sqrt_recip_alphas_cumprod)

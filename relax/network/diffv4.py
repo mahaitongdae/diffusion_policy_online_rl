@@ -5,8 +5,7 @@ import jax, jax.numpy as jnp
 import haiku as hk
 import math
 
-from relax.network.blocks import Activation, DistributionalQNet2, DACERPolicyNet, QNet
-from relax.network.common import WithSquashedGaussianPolicy
+from relax.network.blocks import Activation, DACERPolicyNet, QNet
 from relax.utils.diffusion import GaussianDiffusion
 from relax.utils.flow import OTFlow
 from relax.utils.jax_utils import random_key_from_data
@@ -17,8 +16,8 @@ class Diffv4Params(NamedTuple):
     target_q1: hk.Params
     target_q2: hk.Params
     policy: hk.Params
-    target_poicy: hk.Params
-    alpha_variable: jax.Array
+    target_policy: hk.Params
+    log_alpha: jax.Array
     log_noise_scale: jax.Array
 
 
@@ -30,10 +29,8 @@ class Diffv4Net:
     act_dim: int
     num_particles: int
     num_best_of_n: int
-    # target_entropy: float
-    noise_scale: float
-    beta_schedule_scale: float
-    beta_schedule_type: str = 'linear'
+    beta_schedule_scale: float = 1.0
+    beta_schedule_type: str = 'cosine'
     use_flow: bool = False
 
     @property
@@ -137,29 +134,19 @@ def create_diffv4_net(
     diffusion_hidden_sizes: Sequence[int],
     activation: Activation = jax.nn.relu,
     num_timesteps: int = 20,
-    num_particles: int = 4,
-    num_best_of_n: int = 4,
-    noise_scale: float = 0.05,
-    # target_entropy_scale: float = 0.9,
-    # target_kl_constraint: float = 0.01,
-    beta_schedule_scale: float = 0.3,
+    num_particles: int = 32,
+    num_best_of_n: int = 32,
+    beta_schedule_scale: float = 1.0,
+    beta_schedule_type: str = 'cosine',
     use_flow: bool = False,
-    initial_alpha: float = 1e-4,  # math.log(3) or math.log(5) choose one
-    alpha_transformation: str = 'softplus',
-    initial_log_noise_scale: float = math.log(0.5),
+    initial_alpha: float = 1e-4,
+    initial_noise_scale: float = 0.5,
     ) -> Tuple[Diffv4Net, Diffv4Params]:
-    # q = hk.without_apply_rng(hk.transform(lambda obs, act: DistributionalQNet2(hidden_sizes, activation)(obs, act)))
     q = hk.without_apply_rng(hk.transform(lambda obs, act: QNet(hidden_sizes, activation)(obs, act)))
     policy = hk.without_apply_rng(hk.transform(lambda obs, act, t: DACERPolicyNet(diffusion_hidden_sizes, activation)(obs, act, t)))
 
-    if alpha_transformation == 'softplus':
-        initial_alpha_variable = jnp.log(jnp.exp(initial_alpha) - 1)
-    elif alpha_transformation == 'exp':
-        initial_alpha_variable = jnp.log(initial_alpha)
-    elif alpha_transformation == 'identity':
-        initial_alpha_variable = initial_alpha
-    else:
-        raise NotImplementedError(f"Alpha transformation {alpha_transformation} is not implemented.")
+    initial_log_alpha = jnp.log(initial_alpha)
+    initial_log_noise_scale = jnp.log(initial_noise_scale)
 
     @jax.jit
     def init(key, obs, act):
@@ -170,15 +157,15 @@ def create_diffv4_net(
         target_q2_params = q2_params
         policy_params = policy.init(policy_key, obs, act, 0)
         target_policy_params = policy_params
-        alpha_variable = jnp.array(initial_alpha_variable, dtype=jnp.float32) # math.log(3) or math.log(5) choose one
+        log_alpha = jnp.array(initial_log_alpha, dtype=jnp.float32)
         log_noise_scale = jnp.array(initial_log_noise_scale, dtype=jnp.float32)
-        return Diffv4Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, alpha_variable, log_noise_scale)
+        return Diffv4Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, log_alpha, log_noise_scale)
 
     sample_obs = jnp.zeros((1, obs_dim))
     sample_act = jnp.zeros((1, act_dim))
     params = init(key, sample_obs, sample_act)
 
     net = Diffv4Net(q=q.apply, policy=policy.apply, num_timesteps=num_timesteps, act_dim=act_dim, 
-                    num_particles=num_particles, noise_scale=noise_scale,
-                    beta_schedule_scale=beta_schedule_scale, use_flow=use_flow, num_best_of_n=num_best_of_n,)
+                    num_particles=num_particles,
+                    beta_schedule_scale=beta_schedule_scale, beta_schedule_type=beta_schedule_type, use_flow=use_flow, num_best_of_n=num_best_of_n,)
     return net, params
