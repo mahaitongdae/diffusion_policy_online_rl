@@ -121,7 +121,8 @@ class GaussianDiffusion:
     def p_sample(self, key: jax.Array, model: DiffusionModel, shape: Tuple[int, ...]) -> jax.Array:
         B = self.beta_schedule()
         x_key, noise_key = jax.random.split(key)
-        x = jnp.sqrt(1.0 - B.alphas_cumprod[-1]) * jax.random.normal(x_key, shape)
+        # x = jnp.sqrt(1.0 - B.alphas_cumprod[-1]) * jax.random.normal(x_key, shape)
+        x = 0.5 * jax.random.normal(x_key, shape) # a magic number
         noise = jax.random.normal(noise_key, (self.num_timesteps, *shape))
 
         def body_fn(x, input):

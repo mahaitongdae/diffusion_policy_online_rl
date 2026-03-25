@@ -42,7 +42,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_particles", type=int, default=32)
     parser.add_argument("--num_best_of_n", type=int, default=32)
     parser.add_argument("--beta_schedule_scale", type=float, default=1.0)
-    parser.add_argument("--beta_schedule_type", type=str, default='cosine')
+    parser.add_argument("--beta_schedule_type", type=str, default='linear')
     parser.add_argument("--initial_alpha", type=float, default=1e-4)
     parser.add_argument("--initial_noise_scale", type=float, default=0.5)
     # learning rate

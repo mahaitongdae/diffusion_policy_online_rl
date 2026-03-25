@@ -514,9 +514,10 @@ class DPMDV2(Algorithm):
 
             if self.learnable_noise_scale:
                 def noise_scale_loss_fn(log_noise_scale: jax.Array) -> jax.Array:
-                    return jnp.exp(log_noise_scale)
+                    return jnp.exp(log_noise_scale) - self.target_noise_scale
                 
-                noise_scale_loss, noise_scale_grad = jax.value_and_grad(noise_scale_loss_fn)(log_noise_scale)
+                noise_scale_grad = noise_scale_loss_fn(log_noise_scale)
+                noise_scale_loss = 0.0
                 log_noise_scale, log_noise_scale_opt_state = jax.lax.cond(
                     step % self.delay_log_noise_scale_update == 0,
                     lambda params, opt_state: param_update(self.noise_optim, params, noise_scale_grad, opt_state),
