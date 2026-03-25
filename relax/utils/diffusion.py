@@ -220,8 +220,9 @@ class GaussianDiffusion:
 
 if __name__ == '__main__':
     diffusion = GaussianDiffusion(20)
-    beta_schedule = diffusion.beta_schedule(scale=0.3)
+    beta_schedule = diffusion.beta_schedule()
     print("betas", beta_schedule.betas)
+    print("alphas_cumprod_last", beta_schedule.alphas_cumprod[-1])
     print("sqrt 1 - bar alpha", beta_schedule.sqrt_one_minus_alphas_cumprod)
     print("sqrt 1 over bar alpha", beta_schedule.sqrt_recip_alphas_cumprod)
     print("sqrt 1 - bar alpha over bar alpha", beta_schedule.sqrt_recipm1_alphas_cumprod)
