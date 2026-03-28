@@ -143,7 +143,7 @@ def solve_v_squared_batch(x, l, lower_bound=0.0):
 
     return v
 
-class DPMDV2Fix12345(Algorithm):
+class DPMDV2Fix12345MeanNoise(Algorithm):
 
     def __init__(
         self,
@@ -334,7 +334,11 @@ class DPMDV2Fix12345(Algorithm):
                 if self.bellman_next_action_use_target_policy
                 else policy_params
             )
-            next_action = self.agent.get_action(next_eval_key, (pev_policy_params, -jnp.inf, q1_params, q2_params), next_obs)  # no random noise added in PEV
+            # Mean over N noisy samples instead of BON
+            next_actions, _ = self.agent.get_batch_action_with_q(
+                next_eval_key, (pev_policy_params, log_noise_scale, q1_params, q2_params), next_obs
+            )  # [N, B, A], [N, B]
+            next_action = next_actions.mean(axis=0)  # [B, A]
             q1_target = self.agent.q(target_q1_params, next_obs, next_action)
             q2_target = self.agent.q(target_q2_params, next_obs, next_action)
             q_target = jnp.minimum(q1_target, q2_target)

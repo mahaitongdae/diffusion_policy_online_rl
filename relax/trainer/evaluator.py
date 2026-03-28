@@ -7,6 +7,8 @@ from pathlib import Path
 import argparse
 import pickle
 import csv
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import jax
 from relax.env import create_env
@@ -34,14 +36,16 @@ class Logger(object):
 
 	def __init__(self, log_dir):
 		self.path = os.path.join(log_dir, 'log.csv')
+		self._lock = threading.Lock()
 		with open(self.path, mode='w', newline='') as f:
 			writer = csv.writer(f)
 			writer.writerow(['step', 'avg_ret', 'std_ret'])
 
 	def log(self, step, avg_ret, std_ret):
-		with open(self.path, mode='a', newline='') as f:
-			writer = csv.writer(f)
-			writer.writerow([step, avg_ret, std_ret])
+		with self._lock:
+			with open(self.path, mode='a', newline='') as f:
+				writer = csv.writer(f)
+				writer.writerow([step, avg_ret, std_ret])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -49,11 +53,11 @@ if __name__ == "__main__":
     parser.add_argument("--env", type=str, required=True)
     parser.add_argument("--num_episodes", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--num_eval_workers", type=int, default=4)
     args = parser.parse_args()
 
     master_rng = np.random.default_rng(args.seed)
     env_seed, env_action_seed, policy_seed = map(int, master_rng.integers(0, 2**32 - 1, 3))
-    env, _, _ = create_env(args.env, env_seed, env_action_seed)
 
     policy = PersistFunction.load(args.policy_root / "deterministic.pkl")
     @jax.jit
@@ -66,18 +70,44 @@ if __name__ == "__main__":
         return act.clip(-1.0, 1.0)
 
     logger = Logger(args.policy_root)
+    print_lock = threading.Lock()
 
-    while payload := sys.stdin.readline():
-        step, policy_path = payload.strip().split(",", maxsplit=1)
-        step = int(step)
-        with open(policy_path, "rb") as f:
-            policy_params = pickle.load(f)
+    # Each worker thread gets its own env via thread-local storage
+    _thread_local = threading.local()
 
+    def get_thread_env():
+        if not hasattr(_thread_local, "env"):
+            # Each thread creates its own env with a unique seed
+            seed_offset = threading.get_ident() % (2**31)
+            _thread_local.env, _, _ = create_env(
+                args.env,
+                (env_seed + seed_offset) % (2**32),
+                (env_action_seed + seed_offset) % (2**32),
+            )
+        return _thread_local.env
+
+    def eval_worker(step, policy_params):
+        env = get_thread_env()
         ep_len_list, ep_ret_list = evaluate(env, policy_fn, policy_params, args.num_episodes)
 
         ep_len = np.array(ep_len_list)
         ep_ret = np.array(ep_ret_list)
-        
+
         logger.log(step, ep_ret.mean(), ep_ret.std())
-        # Print results for the main process to capture and log to wandb
-        print(f"EVAL_METRICS:step={step},avg_ret={ep_ret.mean()},std_ret={ep_ret.std()},avg_len={ep_len.mean()}", flush=True)
+        with print_lock:
+            print(f"EVAL_METRICS:step={step},avg_ret={ep_ret.mean()},std_ret={ep_ret.std()},avg_len={ep_len.mean()}", flush=True)
+
+    # Warm up JAX on the main thread env so jit compilation happens once
+    warmup_env, _, _ = create_env(args.env, env_seed, env_action_seed)
+    warmup_obs, _ = warmup_env.reset()
+    dummy_params = None  # Will be populated on first eval
+    warmup_env.close()
+
+    with ThreadPoolExecutor(max_workers=args.num_eval_workers) as pool:
+        while payload := sys.stdin.readline():
+            step, policy_path = payload.strip().split(",", maxsplit=1)
+            step = int(step)
+            with open(policy_path, "rb") as f:
+                policy_params = pickle.load(f)
+
+            pool.submit(eval_worker, step, policy_params)

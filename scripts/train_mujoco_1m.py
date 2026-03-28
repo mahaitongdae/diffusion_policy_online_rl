@@ -24,6 +24,11 @@ from relax.algorithm.dpmdv2_fix12 import DPMDV2Fix12
 from relax.algorithm.dpmdv2_fix123 import DPMDV2Fix123
 from relax.algorithm.dpmdv2_fix1234 import DPMDV2Fix1234
 from relax.algorithm.dpmdv2_fix12345 import DPMDV2Fix12345
+from relax.algorithm.dpmdv2_fix12345_bon_noise import DPMDV2Fix12345BonNoise
+from relax.algorithm.dpmdv2_fix12345_mean_noise import DPMDV2Fix12345MeanNoise
+from relax.algorithm.dpmdv2_fix12345_bon_noise_n4 import DPMDV2Fix12345BonNoiseN4
+from relax.algorithm.dpmdv2_fix12345_bon_noise_n2 import DPMDV2Fix12345BonNoiseN2
+from relax.algorithm.dpmdv2_fix12345_no_bon import DPMDV2Fix12345NoBon
 from relax.algorithm.dpmdv2_current import DPMDV2Current
 from relax.algorithm.dpmdv2_fix1 import DPMDV2Fix1
 from relax.algorithm.dpmdv2_fix12 import DPMDV2Fix12
@@ -770,6 +775,191 @@ if __name__ == "__main__":
                            policy_batch_action_use_target_policy=(
                                args.batch_action_policy == "target"
                            ))
+    elif args.alg == 'dpmdv2_fix12345_bon_noise':
+        import math
+        def mish(x: jax.Array):
+            return x * jnp.tanh(jax.nn.softplus(x))
+        agent, params = create_diffv4_net(init_network_key, obs_dim, act_dim, hidden_sizes, diffusion_hidden_sizes, mish,
+                                          num_timesteps=args.diffusion_steps,
+                                          num_particles=args.num_particles,
+                                          num_best_of_n=args.num_best_of_n,
+                                          noise_scale=args.noise_scale,
+                                          beta_schedule_scale=args.beta_schedule_scale,
+                                          initial_alpha=args.init_alpha,
+                                          alpha_transformation=args.alpha_transformation,
+                                          initial_log_noise_scale=math.log(args.initial_noise_scale))
+        algorithm = DPMDV2Fix12345BonNoise(agent, params, lr=args.lr,
+                           alpha_lr=args.alpha_lr,
+                           lr_schedule_end=args.lr_schedule_end,
+                           lr_schedule_steps=args.lr_schedule_steps,
+                           lr_schedule_begin=args.lr_schedule_begin,
+                           learnable_alpha=args.learnable_alpha,
+                           kl_constraint=args.kl_constraint,
+                           update_additive_noise_scale=args.update_additive_noise_scale,
+                           reweight_type=args.reweight_type,
+                           delay_log_noise_scale_update=args.delay_log_noise_scale_update,
+                           clipped_lower_bound=args.clip_lower_bound,
+                           negative_weights_regularization=args.negative_weights_regularization,
+                           regularization_type=args.regularization_type,
+                           clipped_only_weighted_mse_lower_bound=args.clipped_only_weighted_mse_lower_bound,
+                           use_timestep_weight=args.use_timestep_weight,
+                           target_noise_scale=args.target_noise_scale,
+                           noise_scale_lr=args.noise_scale_lr,
+                           add_state_level_reweighting=args.add_state_level_reweighting,
+                           bellman_next_action_use_target_policy=(
+                               args.bellman_next_action_policy == "target"
+                           ),
+                           policy_batch_action_use_target_policy=(
+                               args.batch_action_policy == "target"
+                           ))
+    elif args.alg == 'dpmdv2_fix12345_mean_noise':
+        import math
+        def mish(x: jax.Array):
+            return x * jnp.tanh(jax.nn.softplus(x))
+        agent, params = create_diffv4_net(init_network_key, obs_dim, act_dim, hidden_sizes, diffusion_hidden_sizes, mish,
+                                          num_timesteps=args.diffusion_steps,
+                                          num_particles=args.num_particles,
+                                          num_best_of_n=args.num_best_of_n,
+                                          noise_scale=args.noise_scale,
+                                          beta_schedule_scale=args.beta_schedule_scale,
+                                          initial_alpha=args.init_alpha,
+                                          alpha_transformation=args.alpha_transformation,
+                                          initial_log_noise_scale=math.log(args.initial_noise_scale))
+        algorithm = DPMDV2Fix12345MeanNoise(agent, params, lr=args.lr,
+                           alpha_lr=args.alpha_lr,
+                           lr_schedule_end=args.lr_schedule_end,
+                           lr_schedule_steps=args.lr_schedule_steps,
+                           lr_schedule_begin=args.lr_schedule_begin,
+                           learnable_alpha=args.learnable_alpha,
+                           kl_constraint=args.kl_constraint,
+                           update_additive_noise_scale=args.update_additive_noise_scale,
+                           reweight_type=args.reweight_type,
+                           delay_log_noise_scale_update=args.delay_log_noise_scale_update,
+                           clipped_lower_bound=args.clip_lower_bound,
+                           negative_weights_regularization=args.negative_weights_regularization,
+                           regularization_type=args.regularization_type,
+                           clipped_only_weighted_mse_lower_bound=args.clipped_only_weighted_mse_lower_bound,
+                           use_timestep_weight=args.use_timestep_weight,
+                           target_noise_scale=args.target_noise_scale,
+                           noise_scale_lr=args.noise_scale_lr,
+                           add_state_level_reweighting=args.add_state_level_reweighting,
+                           bellman_next_action_use_target_policy=(
+                               args.bellman_next_action_policy == "target"
+                           ),
+                           policy_batch_action_use_target_policy=(
+                               args.batch_action_policy == "target"
+                           ))
+    elif args.alg == 'dpmdv2_fix12345_bon_noise_n4':
+        import math
+        def mish(x: jax.Array):
+            return x * jnp.tanh(jax.nn.softplus(x))
+        agent, params = create_diffv4_net(init_network_key, obs_dim, act_dim, hidden_sizes, diffusion_hidden_sizes, mish,
+                                          num_timesteps=args.diffusion_steps,
+                                          num_particles=args.num_particles,
+                                          num_best_of_n=args.num_best_of_n,
+                                          noise_scale=args.noise_scale,
+                                          beta_schedule_scale=args.beta_schedule_scale,
+                                          initial_alpha=args.init_alpha,
+                                          alpha_transformation=args.alpha_transformation,
+                                          initial_log_noise_scale=math.log(args.initial_noise_scale))
+        algorithm = DPMDV2Fix12345BonNoiseN4(agent, params, lr=args.lr,
+                           alpha_lr=args.alpha_lr,
+                           lr_schedule_end=args.lr_schedule_end,
+                           lr_schedule_steps=args.lr_schedule_steps,
+                           lr_schedule_begin=args.lr_schedule_begin,
+                           learnable_alpha=args.learnable_alpha,
+                           kl_constraint=args.kl_constraint,
+                           update_additive_noise_scale=args.update_additive_noise_scale,
+                           reweight_type=args.reweight_type,
+                           delay_log_noise_scale_update=args.delay_log_noise_scale_update,
+                           clipped_lower_bound=args.clip_lower_bound,
+                           negative_weights_regularization=args.negative_weights_regularization,
+                           regularization_type=args.regularization_type,
+                           clipped_only_weighted_mse_lower_bound=args.clipped_only_weighted_mse_lower_bound,
+                           use_timestep_weight=args.use_timestep_weight,
+                           target_noise_scale=args.target_noise_scale,
+                           noise_scale_lr=args.noise_scale_lr,
+                           add_state_level_reweighting=args.add_state_level_reweighting,
+                           bellman_next_action_use_target_policy=(
+                               args.bellman_next_action_policy == "target"
+                           ),
+                           policy_batch_action_use_target_policy=(
+                               args.batch_action_policy == "target"
+                           ))
+    elif args.alg == 'dpmdv2_fix12345_bon_noise_n2':
+        import math
+        def mish(x: jax.Array):
+            return x * jnp.tanh(jax.nn.softplus(x))
+        agent, params = create_diffv4_net(init_network_key, obs_dim, act_dim, hidden_sizes, diffusion_hidden_sizes, mish,
+                                          num_timesteps=args.diffusion_steps,
+                                          num_particles=args.num_particles,
+                                          num_best_of_n=args.num_best_of_n,
+                                          noise_scale=args.noise_scale,
+                                          beta_schedule_scale=args.beta_schedule_scale,
+                                          initial_alpha=args.init_alpha,
+                                          alpha_transformation=args.alpha_transformation,
+                                          initial_log_noise_scale=math.log(args.initial_noise_scale))
+        algorithm = DPMDV2Fix12345BonNoiseN2(agent, params, lr=args.lr,
+                           alpha_lr=args.alpha_lr,
+                           lr_schedule_end=args.lr_schedule_end,
+                           lr_schedule_steps=args.lr_schedule_steps,
+                           lr_schedule_begin=args.lr_schedule_begin,
+                           learnable_alpha=args.learnable_alpha,
+                           kl_constraint=args.kl_constraint,
+                           update_additive_noise_scale=args.update_additive_noise_scale,
+                           reweight_type=args.reweight_type,
+                           delay_log_noise_scale_update=args.delay_log_noise_scale_update,
+                           clipped_lower_bound=args.clip_lower_bound,
+                           negative_weights_regularization=args.negative_weights_regularization,
+                           regularization_type=args.regularization_type,
+                           clipped_only_weighted_mse_lower_bound=args.clipped_only_weighted_mse_lower_bound,
+                           use_timestep_weight=args.use_timestep_weight,
+                           target_noise_scale=args.target_noise_scale,
+                           noise_scale_lr=args.noise_scale_lr,
+                           add_state_level_reweighting=args.add_state_level_reweighting,
+                           bellman_next_action_use_target_policy=(
+                               args.bellman_next_action_policy == "target"
+                           ),
+                           policy_batch_action_use_target_policy=(
+                               args.batch_action_policy == "target"
+                           ))
+    elif args.alg == 'dpmdv2_fix12345_no_bon':
+        import math
+        def mish(x: jax.Array):
+            return x * jnp.tanh(jax.nn.softplus(x))
+        agent, params = create_diffv4_net(init_network_key, obs_dim, act_dim, hidden_sizes, diffusion_hidden_sizes, mish,
+                                          num_timesteps=args.diffusion_steps,
+                                          num_particles=args.num_particles,
+                                          num_best_of_n=args.num_best_of_n,
+                                          noise_scale=args.noise_scale,
+                                          beta_schedule_scale=args.beta_schedule_scale,
+                                          initial_alpha=args.init_alpha,
+                                          alpha_transformation=args.alpha_transformation,
+                                          initial_log_noise_scale=math.log(args.initial_noise_scale))
+        algorithm = DPMDV2Fix12345NoBon(agent, params, lr=args.lr,
+                           alpha_lr=args.alpha_lr,
+                           lr_schedule_end=args.lr_schedule_end,
+                           lr_schedule_steps=args.lr_schedule_steps,
+                           lr_schedule_begin=args.lr_schedule_begin,
+                           learnable_alpha=args.learnable_alpha,
+                           kl_constraint=args.kl_constraint,
+                           update_additive_noise_scale=args.update_additive_noise_scale,
+                           reweight_type=args.reweight_type,
+                           delay_log_noise_scale_update=args.delay_log_noise_scale_update,
+                           clipped_lower_bound=args.clip_lower_bound,
+                           negative_weights_regularization=args.negative_weights_regularization,
+                           regularization_type=args.regularization_type,
+                           clipped_only_weighted_mse_lower_bound=args.clipped_only_weighted_mse_lower_bound,
+                           use_timestep_weight=args.use_timestep_weight,
+                           target_noise_scale=args.target_noise_scale,
+                           noise_scale_lr=args.noise_scale_lr,
+                           add_state_level_reweighting=args.add_state_level_reweighting,
+                           bellman_next_action_use_target_policy=(
+                               args.bellman_next_action_policy == "target"
+                           ),
+                           policy_batch_action_use_target_policy=(
+                               args.batch_action_policy == "target"
+                           ))
     elif args.alg == 'idem':
         def mish(x: jax.Array):
             return x * jnp.tanh(jax.nn.softplus(x))
@@ -852,7 +1042,7 @@ if __name__ == "__main__":
         total_step=args.total_step,
         sample_per_iteration=1,
         evaluate_env=eval_env,
-        save_policy_every=int(args.total_step / 20),
+        save_policy_every=int(args.total_step / 100),
         warmup_with="random",
         log_path=exp_dir,
         update_log_n_step=1 if args.debug else 1000,

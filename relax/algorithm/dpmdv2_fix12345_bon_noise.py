@@ -143,7 +143,7 @@ def solve_v_squared_batch(x, l, lower_bound=0.0):
 
     return v
 
-class DPMDV2Fix12345(Algorithm):
+class DPMDV2Fix12345BonNoise(Algorithm):
 
     def __init__(
         self,
@@ -334,7 +334,7 @@ class DPMDV2Fix12345(Algorithm):
                 if self.bellman_next_action_use_target_policy
                 else policy_params
             )
-            next_action = self.agent.get_action(next_eval_key, (pev_policy_params, -jnp.inf, q1_params, q2_params), next_obs)  # no random noise added in PEV
+            next_action = self.agent.get_action(next_eval_key, (pev_policy_params, log_noise_scale, q1_params, q2_params), next_obs)  # noise + BON, same as env interaction
             q1_target = self.agent.q(target_q1_params, next_obs, next_action)
             q2_target = self.agent.q(target_q2_params, next_obs, next_action)
             q_target = jnp.minimum(q1_target, q2_target)
@@ -347,6 +347,7 @@ class DPMDV2Fix12345(Algorithm):
 
             (q1_loss, q1), q1_grads = jax.value_and_grad(q_loss_fn, has_aux=True)(q1_params)
             (q2_loss, q2), q2_grads = jax.value_and_grad(q_loss_fn, has_aux=True)(q2_params)
+            td_error_abs = jnp.abs(jnp.minimum(q1, q2) - q_backup)
             q1_update, q1_opt_state = self.optim.update(q1_grads, q1_opt_state)
             q2_update, q2_opt_state = self.optim.update(q2_grads, q2_opt_state)
             q1_params = optax.apply_updates(q1_params, q1_update)
@@ -675,6 +676,9 @@ class DPMDV2Fix12345(Algorithm):
                 "q1_max": jnp.max(q1),
                 "q1_min": jnp.min(q1),
                 "q2_loss": q2_loss,
+                "td_error_abs_max": jnp.max(td_error_abs),
+                "td_error_abs_mean": jnp.mean(td_error_abs),
+                "td_error_abs_min": jnp.min(td_error_abs),
                 "policy_loss": total_loss,
                 "q_weights_std": jnp.std(q_weights),
                 "q_weights_mean": jnp.mean(q_weights),

@@ -19,7 +19,6 @@ __pycache__/
 */.ipynb_checkpoints
 *.png
 *.ipynb
-*.sh
 
 multirun/
 wandb/

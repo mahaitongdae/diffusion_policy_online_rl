@@ -1,9 +1,10 @@
+from collections import deque
 from pathlib import Path
 import os
 import subprocess
 import sys
 import threading
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import jax
 import numpy as np
@@ -45,6 +46,8 @@ class OffPolicyTrainer:
         warmup_with: str = "random",  # "policy" or "random"
         wandb_group: str = "None",
         wandb_project_name: str = "diffusion_online_rl",
+        num_eval_workers: int = 4,
+        max_checkpoints: int = 10,
     ):
         self.env = env
         self.algorithm = algorithm
@@ -66,6 +69,9 @@ class OffPolicyTrainer:
         self.hparams = hparams
         self.warmup_with = warmup_with
         self.save_value = save_value
+        self.num_eval_workers = num_eval_workers
+        self.max_checkpoints = max_checkpoints
+        self._checkpoint_history: deque[List[Path]] = deque()
         self.eval_log_file = None
         self.eval_err_log_file = None
         # TODO: make EpisodeLog and Experience configurable
@@ -112,6 +118,7 @@ class OffPolicyTrainer:
                 "--env", self.evaluate_env.spec.id,
                 "--num_episodes", str(self.evaluate_n_episode),
                 "--seed", str(0),
+                "--num_eval_workers", str(self.num_eval_workers),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -229,14 +236,26 @@ class OffPolicyTrainer:
                     sample_step=sl.sample_step,
                     update_step=ul.update_step,
                 )
-                self.algorithm.save_policy(self.log_path / policy_pkl_name)
-                
-                if self.save_value:
-                    self.algorithm.save_q(self.log_path / policy_pkl_name.replace('policy', 'value'))
-                
+                policy_path = self.log_path / policy_pkl_name
+                self.algorithm.save_policy(policy_path)
 
-                command = f"{sl.sample_step},{self.log_path / policy_pkl_name}\n"
+                checkpoint_files = [policy_path]
+                if self.save_value:
+                    value_path = self.log_path / policy_pkl_name.replace('policy', 'value')
+                    self.algorithm.save_q(value_path)
+                    checkpoint_files.append(value_path)
+
+                self._save_checkpoint(checkpoint_files)
+
+                command = f"{sl.sample_step},{policy_path}\n"
                 self.evaluator.stdin.write(command.encode())
+
+    def _save_checkpoint(self, files: List[Path]):
+        self._checkpoint_history.append(files)
+        if len(self._checkpoint_history) > self.max_checkpoints:
+            old_files = self._checkpoint_history.popleft()
+            for f in old_files:
+                f.unlink(missing_ok=True)
 
     def add_scalar(self, tag: str, value: float, step: int):
         self.last_metrics[tag] = value
