@@ -143,7 +143,97 @@ def solve_v_squared_batch(x, l, lower_bound=0.0):
 
     return v
 
-class DPMDV2Fix12345BonNoiseN4(Algorithm):
+def solve_v_batch_two_sided(x, l, lower_bound=0.0, upper_bound=jnp.inf):
+    """
+    Solves for v such that mean(clip((x - v) / l, lower_bound, upper_bound)) = 1.
+
+    Sweeps over all (j, m) partitions where j items are capped at upper_bound
+    and m items are floored at lower_bound, with the rest being active.
+    O(N^2) in num_samples, which is fine for typical N (e.g. 32).
+
+    Args:
+        x: Input data of shape (batch_size, num_samples)
+        l: Scale parameter of shape (batch_size, 1) or scalar.
+        lower_bound: The clipping floor b (scalar).
+        upper_bound: The clipping ceiling u (scalar).
+
+    Returns:
+        v: Solution of shape (batch_size, 1)
+    """
+    N = x.shape[-1]
+    b = lower_bound
+    u = upper_bound
+
+    # Sort descending
+    x_sorted = jnp.sort(x, axis=-1)[:, ::-1]  # (B, N)
+
+    # Cumulative sums with 0 prepended: cumsum_ext[i] = sum of first i items
+    cumsum_x = jnp.cumsum(x_sorted, axis=-1)  # (B, N)
+    cumsum_ext = jnp.concatenate([jnp.zeros_like(cumsum_x[:, :1]), cumsum_x], axis=-1)  # (B, N+1)
+
+    # For solution with j upper-capped items and m lower-floored items:
+    #   items 0..j-1: capped at u
+    #   items j..N-m-1: active, contribute (x_i - v) / l
+    #   items N-m..N-1: floored at b
+    # Constraint: j*u + sum_active((x_i - v)/l) + m*b = N
+    # => v = (sum_active - l*(N - j*u - m*b)) / (N - j - m)
+
+    j_vals = jnp.arange(N + 1)
+    m_vals = jnp.arange(N + 1)
+    jj, mm = jnp.meshgrid(j_vals, m_vals, indexing='ij')  # (N+1, N+1)
+
+    active = N - jj - mm  # (N+1, N+1)
+    active_safe = jnp.maximum(active, 1)
+
+    # Sum of active items: cumsum_ext[:, N-m] - cumsum_ext[:, j]
+    end_idx = jnp.clip(N - mm, 0, N)  # (N+1, N+1)
+    sum_active = cumsum_ext[:, end_idx] - cumsum_ext[:, jj]  # (B, N+1, N+1)
+
+    # Ensure l broadcasts to (B, N+1, N+1)
+    l_3d = l.reshape(-1, 1, 1) if hasattr(l, 'reshape') and l.ndim >= 1 else l
+
+    # Avoid 0 * inf = NaN: only multiply when count > 0
+    j_contrib = jnp.where(jj > 0, jj * u, 0.0)  # (N+1, N+1)
+    m_contrib = jnp.where(mm > 0, mm * b, 0.0)  # (N+1, N+1)
+    target = l_3d * (N - j_contrib[None] - m_contrib[None])
+    v_cand = (sum_active - target) / active_safe[None]  # (B, N+1, N+1)
+
+    # Consistency checks using padded x_sorted
+    # Pad with +inf at front (for j=0 boundary) and -inf at back (for m=0 boundary)
+    x_pad = jnp.concatenate([
+        jnp.full_like(x_sorted[:, :1], jnp.inf),
+        x_sorted,
+        jnp.full_like(x_sorted[:, :1], -jnp.inf)
+    ], axis=-1)  # (B, N+2), x_pad[:,0]=inf, x_pad[:,1..N]=x_sorted[:,0..N-1], x_pad[:,N+1]=-inf
+
+    eps = 1e-6
+
+    # c1: if j > 0, last upper-capped item x_sorted[j-1] must be > v + l*u
+    #     x_sorted[j-1] = x_pad[:, j] (x_pad[0]=+inf so j=0 is auto-satisfied)
+    # When u=inf: j>0 is impossible (can't cap at inf), so c1 is False → invalid. Correct.
+    c1_threshold = v_cand + l_3d * u  # may be inf for u=inf, which makes finite x < inf → c1=False for j>0
+    c1 = (x_pad[:, jj] >= c1_threshold - eps) | (jj[None] == 0)
+
+    # c2: first active item x_sorted[j] must be <= v + l*u
+    #     When u=inf: always True (anything <= inf)
+    c2 = (x_pad[:, jnp.clip(jj + 1, 0, N + 1)] <= c1_threshold + eps) | (active[None] <= 0)
+
+    # c3: last active item x_sorted[N-m-1] must be >= v + l*b
+    c3_threshold = v_cand + l_3d * b
+    c3 = (x_pad[:, jnp.clip(N - mm, 0, N + 1)] >= c3_threshold - eps) | (active[None] <= 0)
+
+    # c4: if m > 0, first lower-floored item x_sorted[N-m] must be < v + l*b
+    c4 = (x_pad[:, jnp.clip(N - mm + 1, 0, N + 1)] <= c3_threshold + eps) | (mm[None] == 0)
+
+    valid = (active[None] > 0) & c1 & c2 & c3 & c4
+
+    # Pick the valid v (exactly one per batch element)
+    v_masked = jnp.where(valid, v_cand, -jnp.inf)
+    v_result = v_masked.reshape(v_masked.shape[0], -1).max(axis=-1, keepdims=True)  # (B, 1)
+
+    return v_result
+
+class DPMDV2Fix12345BonNoiseN4UB(Algorithm):
 
     def __init__(
         self,
@@ -170,6 +260,7 @@ class DPMDV2Fix12345BonNoiseN4(Algorithm):
         use_analytical_alpha_grad: bool = True,
         delay_log_noise_scale_update: int = 250,
         clipped_lower_bound: float = 0.0,
+        clipped_upper_bound: float = jnp.inf,
         negative_weights_regularization: float = 0.0,
         regularization_type: str = 'square',
         clipped_only_weighted_mse_lower_bound: float = -1.0,
@@ -221,6 +312,7 @@ class DPMDV2Fix12345BonNoiseN4(Algorithm):
         )
         self.use_ema = use_ema
         self.clipped_lower_bound = clipped_lower_bound
+        self.clipped_upper_bound = clipped_upper_bound
         self.negative_weights_regularization = negative_weights_regularization
         self.regularization_type = regularization_type
         self.clipped_only_weighted_mse_lower_bound = clipped_only_weighted_mse_lower_bound
@@ -395,14 +487,15 @@ class DPMDV2Fix12345BonNoiseN4(Algorithm):
                     q_std = batch_q_std.mean()
                     entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'negative_strictly_normalized_relu_linear':
-                    # assert not self.learnable_alpha, "strictly_normalized_relu_linear is not compatible with learnable_alpha"
-                    # assert clipped_lower_bound <= 0, "negative_strictly_normalized_relu_linear is not compatible with clipped_lower_bound != -jnp.inf"
-                    # assert self.alpha_transformation == 'identity', "strictly_normalized_relu_linear is not compatible with alpha_transformation != identity"
-                    # q_min = get_min_q(next_obs, next_action)
-                    normalized_diff = solve_v_batch(q_batch_action.T, alpha, lower_bound=self.clipped_lower_bound).T  # pass in [B, N] and get [B, 1]
+                    clipped_upper_bound = self.clipped_upper_bound
+                    normalized_diff = solve_v_batch_two_sided(
+                        q_batch_action.T, alpha,
+                        lower_bound=self.clipped_lower_bound,
+                        upper_bound=clipped_upper_bound,
+                    ).T  # pass in [B, N] and get [B, 1]
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
                     q_normalized = (q_batch_action - normalized_diff) / alpha
-                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, clipped_upper_bound)
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()

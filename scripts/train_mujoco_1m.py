@@ -29,6 +29,7 @@ from relax.algorithm.dpmdv2_fix12345_mean_noise import DPMDV2Fix12345MeanNoise
 from relax.algorithm.dpmdv2_fix12345_bon_noise_n4 import DPMDV2Fix12345BonNoiseN4
 from relax.algorithm.dpmdv2_fix12345_bon_noise_n2 import DPMDV2Fix12345BonNoiseN2
 from relax.algorithm.dpmdv2_fix12345_no_bon import DPMDV2Fix12345NoBon
+from relax.algorithm.dpmdv2_fix12345_bon_noise_n4_ub import DPMDV2Fix12345BonNoiseN4UB
 from relax.algorithm.dpmdv2_current import DPMDV2Current
 from relax.algorithm.dpmdv2_fix1 import DPMDV2Fix1
 from relax.algorithm.dpmdv2_fix12 import DPMDV2Fix12
@@ -93,6 +94,7 @@ if __name__ == "__main__":
     parser.add_argument("--alpha_transformation", type=str, default="identity") # 'None', 'softplus', 'exp'
     parser.add_argument("--wandb_group", type=str, default="debug")
     parser.add_argument("--clip_lower_bound", type=float, default=0.0)
+    parser.add_argument("--clip_upper_bound", type=float, default=float('inf'))
     parser.add_argument("--eval_env", type=str, default='None')
     parser.add_argument("--negative_weights_regularization", type=float, default=0.0)
     parser.add_argument("--regularization_type", type=str, default='square')
@@ -947,6 +949,44 @@ if __name__ == "__main__":
                            reweight_type=args.reweight_type,
                            delay_log_noise_scale_update=args.delay_log_noise_scale_update,
                            clipped_lower_bound=args.clip_lower_bound,
+                           negative_weights_regularization=args.negative_weights_regularization,
+                           regularization_type=args.regularization_type,
+                           clipped_only_weighted_mse_lower_bound=args.clipped_only_weighted_mse_lower_bound,
+                           use_timestep_weight=args.use_timestep_weight,
+                           target_noise_scale=args.target_noise_scale,
+                           noise_scale_lr=args.noise_scale_lr,
+                           add_state_level_reweighting=args.add_state_level_reweighting,
+                           bellman_next_action_use_target_policy=(
+                               args.bellman_next_action_policy == "target"
+                           ),
+                           policy_batch_action_use_target_policy=(
+                               args.batch_action_policy == "target"
+                           ))
+    elif args.alg == 'dpmdv2_fix12345_bon_noise_n4_ub':
+        import math
+        def mish(x: jax.Array):
+            return x * jnp.tanh(jax.nn.softplus(x))
+        agent, params = create_diffv4_net(init_network_key, obs_dim, act_dim, hidden_sizes, diffusion_hidden_sizes, mish,
+                                          num_timesteps=args.diffusion_steps,
+                                          num_particles=args.num_particles,
+                                          num_best_of_n=args.num_best_of_n,
+                                          noise_scale=args.noise_scale,
+                                          beta_schedule_scale=args.beta_schedule_scale,
+                                          initial_alpha=args.init_alpha,
+                                          alpha_transformation=args.alpha_transformation,
+                                          initial_log_noise_scale=math.log(args.initial_noise_scale))
+        algorithm = DPMDV2Fix12345BonNoiseN4UB(agent, params, lr=args.lr,
+                           alpha_lr=args.alpha_lr,
+                           lr_schedule_end=args.lr_schedule_end,
+                           lr_schedule_steps=args.lr_schedule_steps,
+                           lr_schedule_begin=args.lr_schedule_begin,
+                           learnable_alpha=args.learnable_alpha,
+                           kl_constraint=args.kl_constraint,
+                           update_additive_noise_scale=args.update_additive_noise_scale,
+                           reweight_type=args.reweight_type,
+                           delay_log_noise_scale_update=args.delay_log_noise_scale_update,
+                           clipped_lower_bound=args.clip_lower_bound,
+                           clipped_upper_bound=args.clip_upper_bound,
                            negative_weights_regularization=args.negative_weights_regularization,
                            regularization_type=args.regularization_type,
                            clipped_only_weighted_mse_lower_bound=args.clipped_only_weighted_mse_lower_bound,
