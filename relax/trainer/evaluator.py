@@ -2,17 +2,26 @@ import os
 os.environ["JAX_PLATFORMS"] = "cpu"
 os.environ["OMP_NUM_THREADS"] = "1"
 
+import resource
 import sys
 from pathlib import Path
 import argparse
 import pickle
 import csv
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import jax
 from relax.env import create_env
 from relax.utils.persistence import PersistFunction
+
+# Raise file descriptor limit to avoid pthread_create failures
+try:
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(hard, 65536), hard))
+except (ValueError, resource.error):
+    pass
 
 def evaluate(env, policy_fn, policy_params, num_episodes):
     ep_len_list = []
@@ -87,15 +96,19 @@ if __name__ == "__main__":
         return _thread_local.env
 
     def eval_worker(step, policy_params):
-        env = get_thread_env()
-        ep_len_list, ep_ret_list = evaluate(env, policy_fn, policy_params, args.num_episodes)
+        try:
+            env = get_thread_env()
+            ep_len_list, ep_ret_list = evaluate(env, policy_fn, policy_params, args.num_episodes)
 
-        ep_len = np.array(ep_len_list)
-        ep_ret = np.array(ep_ret_list)
+            ep_len = np.array(ep_len_list)
+            ep_ret = np.array(ep_ret_list)
 
-        logger.log(step, ep_ret.mean(), ep_ret.std())
-        with print_lock:
-            print(f"EVAL_METRICS:step={step},avg_ret={ep_ret.mean()},std_ret={ep_ret.std()},avg_len={ep_len.mean()}", flush=True)
+            logger.log(step, ep_ret.mean(), ep_ret.std())
+            with print_lock:
+                print(f"EVAL_METRICS:step={step},avg_ret={ep_ret.mean()},std_ret={ep_ret.std()},avg_len={ep_len.mean()}", flush=True)
+        except Exception:
+            with print_lock:
+                print(f"[WARNING] Eval failed for step={step}:\n{traceback.format_exc()}", file=sys.stderr, flush=True)
 
     # Warm up JAX on the main thread env so jit compilation happens once
     warmup_env, _, _ = create_env(args.env, env_seed, env_action_seed)

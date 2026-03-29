@@ -109,6 +109,9 @@ class OffPolicyTrainer:
             self.algorithm.save_q_structure(self.log_path, dummy_obs=dummy_data.obs[0], dummy_action=dummy_data.action[0])
         self.eval_log_file = open(self.log_path / "eval_log.out", "a")
         self.eval_err_log_file = open(self.log_path / "eval_log.err", "a")
+        self._start_evaluator()
+
+    def _start_evaluator(self):
         eval_env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
         self.evaluator = subprocess.Popen(
             [
@@ -136,7 +139,7 @@ class OffPolicyTrainer:
                 if self.eval_log_file:
                     self.eval_log_file.write(line_str)
                     self.eval_log_file.flush()
-                
+
                 if line_str.startswith("EVAL_METRICS:"):
                     try:
                         # Format: EVAL_METRICS:step=1000,avg_ret=10.0,std_ret=1.0,avg_len=50.0
@@ -147,9 +150,22 @@ class OffPolicyTrainer:
                         self.add_scalar("evaluate/episode_length", float(data["avg_len"]), step)
                     except Exception:
                         pass
-        
+
         self.eval_reader_thread = threading.Thread(target=log_reader, daemon=True)
         self.eval_reader_thread.start()
+
+    def _send_eval_command(self, command: str):
+        try:
+            self.evaluator.stdin.write(command.encode())
+        except BrokenPipeError:
+            print(f"[WARNING] Evaluator subprocess died, restarting...", flush=True)
+            if self.eval_err_log_file:
+                self.eval_err_log_file.flush()
+            self._start_evaluator()
+            try:
+                self.evaluator.stdin.write(command.encode())
+            except BrokenPipeError:
+                print(f"[WARNING] Evaluator restart failed, skipping eval", flush=True)
 
     def warmup(self, key: jax.Array, obs: np.ndarray):
         step = 0
@@ -248,7 +264,7 @@ class OffPolicyTrainer:
                 self._save_checkpoint(checkpoint_files)
 
                 command = f"{sl.sample_step},{policy_path}\n"
-                self.evaluator.stdin.write(command.encode())
+                self._send_eval_command(command)
 
     def _save_checkpoint(self, files: List[Path]):
         self._checkpoint_history.append(files)
