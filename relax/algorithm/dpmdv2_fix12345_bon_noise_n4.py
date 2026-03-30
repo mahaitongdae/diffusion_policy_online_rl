@@ -372,19 +372,32 @@ class DPMDV2Fix12345BonNoiseN4(Algorithm):
                     "strictly_normalized_logsumexp",
                     "negative_strictly_normalized_logsumexp",
                     "negative_strictly_normalized_relu_linear",
+                    "group_relative_linear",
+                    "group_relative_linear_running_stats",
                 }, "Unchecked reweight type"
 
-                if self.reweight_type == 'normalized_relu_linear':
+                if self.reweight_type == 'group_relative_linear':
                     assert not self.learnable_alpha, "normalized_relu_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
-                    q_normalized = (q_batch_action + alpha - batch_q_mean) / (batch_q_std + 1e-6)
-                    q_weights = jax.nn.relu(q_normalized)
+                    q_normalized = (q_batch_action - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
-                    entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                    entropy_var = jnp.clip(q_weights, 0.0, jnp.inf)
+                    entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'group_relative_linear_running_stats':
+                    assert not self.learnable_alpha, "normalized_relu_linear is not compatible with learnable_alpha"
+                    # q_min = get_min_q(next_obs, next_action)
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - running_mean) / (running_std + 1e-6)
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy_var = jnp.clip(q_weights, 0.0, jnp.inf)
+                    entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'strictly_normalized_relu_linear':
                     normalized_diff = solve_v_batch(q_batch_action.T, alpha).T  # pass in [B, N] and get [B, 1]
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)

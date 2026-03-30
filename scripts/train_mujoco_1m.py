@@ -86,7 +86,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action='store_true', default=False)
     parser.add_argument("--beta_schedule_scale", type=float, default=1.0)
     parser.add_argument("--beta_schedule_type", type=str, default='linear')
-    parser.add_argument("--learnable_alpha", default=True, action='store_true')
+    parser.add_argument("--learnable_alpha", default=False, action='store_true')
     parser.add_argument("--update_additive_noise_scale", default=True, action='store_true')
     parser.add_argument("--kl_constraint", type=float, default=1.0)
     parser.add_argument("--init_alpha", type=float, default=1e-4)
