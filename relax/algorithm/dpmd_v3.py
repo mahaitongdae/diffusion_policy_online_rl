@@ -1,3 +1,24 @@
+"""
+DPMD V3 — consolidated from dpmdv2_fix12345_bon_noise_n4.
+
+Bug fixes over dpmdv2_current (dpmd_v2):
+  1. Removed duplicate Q param updates (q1/q2 were updated twice per step).
+  2. Swapped return order of jax.value_and_grad for alpha_loss (was grad, loss).
+  3. Same value_and_grad swap fix for noise_scale_loss; changed noise_scale_loss
+     from linear to squared error.
+  4. Split diffusion_noise_key per particle so each gets a unique key in vmap;
+     rewired vmap to pass (key, weights, model, t, x_start) as positional args
+     instead of binding key/model via partial.
+  5. Monkey-patched get_action and get_batch_action_with_q to clip actions to
+     [-1, 1] after noise addition (original clipped before noise).
+
+Setup changes (bon_noise_n4 variant on top of fix12345):
+  - Hardcoded num_best_of_n = 4.
+  - PEV next_action uses log_noise_scale + BON (was -inf, i.e. no noise).
+  - Added group_relative_linear and group_relative_linear_running_stats
+    reweight types.
+  - Extended logging: td_error_abs, positive/negative weight value stats.
+"""
 from typing import NamedTuple, Tuple
 from functools import partial
 
@@ -143,7 +164,7 @@ def solve_v_squared_batch(x, l, lower_bound=0.0):
 
     return v
 
-class DPMDV2Fix12345NoBon(Algorithm):
+class DPMDV3(Algorithm):
 
     def __init__(
         self,
@@ -180,7 +201,7 @@ class DPMDV2Fix12345NoBon(Algorithm):
         policy_batch_action_use_target_policy: bool = True,
     ):
         self.agent = agent
-        self.agent.num_best_of_n = 1  # no BON, just single sample
+        self.agent.num_best_of_n = 4  # override BON count to 4
         self.gamma = gamma
         self.tau = tau
         self.delay_update = delay_update
@@ -372,19 +393,32 @@ class DPMDV2Fix12345NoBon(Algorithm):
                     "strictly_normalized_logsumexp",
                     "negative_strictly_normalized_logsumexp",
                     "negative_strictly_normalized_relu_linear",
+                    "group_relative_linear",
+                    "group_relative_linear_running_stats",
                 }, "Unchecked reweight type"
 
-                if self.reweight_type == 'normalized_relu_linear':
+                if self.reweight_type == 'group_relative_linear':
                     assert not self.learnable_alpha, "normalized_relu_linear is not compatible with learnable_alpha"
-                    assert self.alpha_transformation == 'identity', "normalized_relu_linear is not compatible with alpha_transformation != identity"
                     # q_min = get_min_q(next_obs, next_action)
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
-                    q_normalized = (q_batch_action + alpha - batch_q_mean) / (batch_q_std + 1e-6)
-                    q_weights = jax.nn.relu(q_normalized)
+                    q_normalized = (q_batch_action - batch_q_mean) / (batch_q_std + 1e-6)
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
                     scaled_q = q_normalized
                     q_mean = batch_q_mean.mean()
                     q_std = batch_q_std.mean()
-                    entropy = jax.scipy.special.entr(q_weights / q_weights.sum(axis=0, keepdims=True)).sum(axis=0)
+                    entropy_var = jnp.clip(q_weights, 0.0, jnp.inf)
+                    entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
+                elif self.reweight_type == 'group_relative_linear_running_stats':
+                    assert not self.learnable_alpha, "normalized_relu_linear is not compatible with learnable_alpha"
+                    # q_min = get_min_q(next_obs, next_action)
+                    batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
+                    q_normalized = (q_batch_action - running_mean) / (running_std + 1e-6)
+                    q_weights = jnp.clip(q_normalized, clipped_lower_bound, jnp.inf)
+                    scaled_q = q_normalized
+                    q_mean = batch_q_mean.mean()
+                    q_std = batch_q_std.mean()
+                    entropy_var = jnp.clip(q_weights, 0.0, jnp.inf)
+                    entropy = jax.scipy.special.entr(entropy_var / entropy_var.sum(axis=0, keepdims=True)).sum(axis=0)
                 elif self.reweight_type == 'strictly_normalized_relu_linear':
                     normalized_diff = solve_v_batch(q_batch_action.T, alpha).T  # pass in [B, N] and get [B, 1]
                     batch_q_mean, batch_q_std = q_batch_action.mean(axis=0, keepdims=True), q_batch_action.std(axis=0, keepdims=True)
@@ -671,6 +705,17 @@ class DPMDV2Fix12345NoBon(Algorithm):
             positive_q_weights_count = jnp.where(q_weights > 0, jnp.ones_like(q_weights), jnp.zeros_like(q_weights)).sum(axis=0)
             negative_q_weights_count = jnp.where(q_weights < 0, jnp.ones_like(q_weights), jnp.zeros_like(q_weights)).sum(axis=0)
 
+            pos_mask = q_weights > 0
+            neg_mask = q_weights < 0
+            pos_weights = jnp.where(pos_mask, q_weights, 0.0)
+            neg_weights = jnp.where(neg_mask, q_weights, 0.0)
+            pos_sum = pos_mask.sum()
+            neg_sum = neg_mask.sum()
+            pos_weights_mean = jnp.where(pos_sum > 0, pos_weights.sum() / pos_sum, 0.0)
+            neg_weights_mean = jnp.where(neg_sum > 0, neg_weights.sum() / neg_sum, 0.0)
+            pos_weights_std = jnp.where(pos_sum > 0, jnp.sqrt(jnp.where(pos_mask, (q_weights - pos_weights_mean) ** 2, 0.0).sum() / pos_sum), 0.0)
+            neg_weights_std = jnp.where(neg_sum > 0, jnp.sqrt(jnp.where(neg_mask, (q_weights - neg_weights_mean) ** 2, 0.0).sum() / neg_sum), 0.0)
+
             info = {
                 "q1_loss": q1_loss,
                 "q1_mean": jnp.mean(q1),
@@ -691,6 +736,10 @@ class DPMDV2Fix12345NoBon(Algorithm):
                 "positive_q_weights_count_std": jnp.std(positive_q_weights_count),
                 "negative_q_weights_count_mean": jnp.mean(negative_q_weights_count),
                 "negative_q_weights_count_std": jnp.std(negative_q_weights_count),
+                "positive_q_weights_value_mean": pos_weights_mean,
+                "positive_q_weights_value_std": pos_weights_std,
+                "negative_q_weights_value_mean": neg_weights_mean,
+                "negative_q_weights_value_std": neg_weights_std,
                 "scale_q_mean": jnp.mean(scaled_q),
                 "scale_q_std": jnp.std(scaled_q, axis=0).mean(),
                 "scale_q_gap_mean": (jnp.max(scaled_q, axis=0) - jnp.min(scaled_q, axis=0)).mean(),
